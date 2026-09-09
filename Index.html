@@ -1,0 +1,1816 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+<title>Fight With Jo - Performance App</title>
+<link rel="manifest" href="manifest.json" />
+<meta name="theme-color" content="#0A0A0A" />
+<link rel="icon" href="icon-192.png" />
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.0/chart.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+<style>
+  :root{
+    --bg:#FFFFFF;
+    --surface:#FFFFFF;
+    --border:#E2E8E7;
+    --text:#000000;
+    --muted:#5B6664;
+    --turquoise:#20B2AA;
+    --turquoise-dark:#159A94;
+    --turquoise-tint:#E6F7F6;
+    --poor:#E24B4A;
+    --average:#EF9F27;
+    --good:#378ADD;
+    --elite:#1D9E75;
+    --minor:#EF9F27;
+    --moderate:#E2841F;
+    --severe:#E24B4A;
+    --active:#E24B4A;
+    --recovering:#378ADD;
+    --cleared:#1D9E75;
+  }
+  *{box-sizing:border-box;}
+  body{
+    margin:0;background:var(--bg);color:var(--text);
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
+    -webkit-tap-highlight-color:transparent;
+  }
+  #app{max-width:480px;margin:0 auto;min-height:100vh;padding-bottom:76px;position:relative;}
+  header.top{
+    display:flex;align-items:center;gap:10px;padding:16px 16px 12px;
+    background:var(--surface);border-bottom:1px solid var(--border);
+    position:sticky;top:0;z-index:10;
+  }
+  .logo{
+    width:34px;height:34px;border-radius:9px;flex-shrink:0;overflow:hidden;
+    box-shadow:0 1px 3px rgba(0,0,0,0.25);
+  }
+  .logo img{width:100%;height:100%;object-fit:cover;display:block;}
+  header.top h1{font-size:16px;margin:0;font-weight:800;letter-spacing:0.01em;line-height:1.15;}
+  header.top p{margin:1px 0 0;font-size:10.5px;color:var(--turquoise-dark);font-weight:700;text-transform:uppercase;letter-spacing:0.06em;}
+  .backup-btn{margin-left:auto;background:none;border:1px solid var(--border);border-radius:8px;padding:7px 10px;font-size:11px;color:var(--turquoise-dark);font-weight:600;cursor:pointer;}
+
+  main{padding:16px;}
+  h2.page-title{font-size:14px;font-weight:700;margin:0 0 12px;text-transform:uppercase;letter-spacing:0.02em;color:var(--muted);}
+
+  .stat-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:20px;}
+  .stat-card{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:14px;box-shadow:0 1px 3px rgba(0,0,0,0.04);}
+  .stat-card .label{font-size:11px;color:var(--muted);margin-bottom:6px;}
+  .stat-card .value{font-size:24px;font-weight:700;color:var(--turquoise-dark);}
+
+  .cat-card{
+    display:flex;align-items:center;gap:12px;
+    background:var(--surface);border:1px solid var(--border);border-left:4px solid var(--turquoise);
+    border-radius:12px;padding:13px 14px;margin-bottom:10px;box-shadow:0 1px 3px rgba(0,0,0,0.04);
+  }
+  .cat-icon{
+    width:42px;height:42px;border-radius:10px;background:var(--turquoise-tint);
+    display:flex;align-items:center;justify-content:center;font-size:20px;flex-shrink:0;
+  }
+  .cat-info{flex:1;min-width:0;}
+  .cat-name{font-weight:700;font-size:14px;margin:0 0 2px;}
+  .cat-meta{font-size:11.5px;color:var(--muted);margin:0;}
+  .cat-trend{font-size:12px;font-weight:700;flex-shrink:0;text-align:right;}
+  .cat-trend .avg{font-size:16px;color:var(--text);}
+
+  .card-list{display:flex;flex-direction:column;gap:10px;}
+  .test-card{display:flex;gap:12px;align-items:center;background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:12px;box-shadow:0 1px 3px rgba(0,0,0,0.04);}
+  .test-photo{width:44px;height:44px;border-radius:10px;background:var(--turquoise-tint);display:flex;align-items:center;justify-content:center;font-size:20px;flex-shrink:0;}
+  .test-info{flex:1;min-width:0;}
+  .test-name{font-weight:700;font-size:14px;margin:0 0 2px;}
+  .test-desc{font-size:12px;color:var(--muted);margin:0;}
+  .test-unit{font-size:11px;color:var(--turquoise-dark);font-weight:600;margin-top:2px;}
+
+  .empty{text-align:center;padding:40px 16px;color:var(--muted);}
+  .empty b{display:block;color:var(--text);font-size:15px;margin-bottom:4px;}
+
+  .btn{display:flex;align-items:center;justify-content:center;gap:6px;background:var(--turquoise);color:white;border:none;border-radius:10px;padding:13px;font-size:14.5px;font-weight:700;cursor:pointer;width:100%;}
+  .btn:active{background:var(--turquoise-dark);}
+  .btn.secondary{background:var(--surface);color:var(--text);border:1px solid var(--border);}
+  .btn.ghost{background:var(--turquoise-tint);color:var(--turquoise-dark);}
+  .btn.danger{background:var(--poor);}
+  .btn.small{padding:9px;font-size:13px;}
+  .fab{position:fixed;right:20px;bottom:88px;width:52px;height:52px;border-radius:26px;background:var(--turquoise);color:white;border:none;font-size:26px;box-shadow:0 6px 16px rgba(0,0,0,0.2);display:flex;align-items:center;justify-content:center;cursor:pointer;max-width:480px;margin:0 auto;}
+
+  nav.bottom{position:fixed;bottom:0;left:0;right:0;background:var(--surface);border-top:1px solid var(--border);display:flex;max-width:480px;margin:0 auto;}
+  nav.bottom button{flex:1;background:none;border:none;padding:10px 4px 12px;display:flex;flex-direction:column;align-items:center;gap:3px;color:var(--muted);font-size:10px;cursor:pointer;}
+  nav.bottom button .ic{font-size:18px;}
+  nav.bottom button.active{color:var(--turquoise-dark);}
+
+  .field{display:flex;flex-direction:column;gap:6px;margin-bottom:14px;}
+  .field label{font-size:12px;color:var(--muted);font-weight:600;}
+  .field input,.field select,.field textarea{border:1px solid var(--border);border-radius:8px;padding:10px 11px;font-size:14px;background:var(--surface);color:var(--text);width:100%;font-family:inherit;}
+  .field-row{display:grid;grid-template-columns:1fr 1fr;gap:10px;}
+  .field-row3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;}
+
+  .modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,0.45);display:flex;align-items:flex-end;justify-content:center;z-index:50;}
+  .modal{background:var(--bg);width:100%;max-width:480px;border-radius:16px 16px 0 0;padding:18px 16px 24px;max-height:88vh;overflow-y:auto;}
+  .modal-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;}
+  .modal-head h3{margin:0;font-size:16px;}
+  .close-x{background:none;border:none;font-size:20px;color:var(--muted);cursor:pointer;padding:4px;}
+
+  .badge{display:inline-block;padding:3px 9px;border-radius:20px;font-size:11px;font-weight:700;color:white;}
+  .result-box{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:16px;text-align:center;margin:14px 0;}
+  .result-box .score{font-size:30px;font-weight:800;margin:6px 0;}
+  .result-box .sub{font-size:12px;color:var(--muted);}
+
+  .history-row{display:flex;justify-content:space-between;align-items:center;background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:11px 12px;margin-bottom:8px;}
+  .history-row .h-left b{font-size:13.5px;display:block;}
+  .history-row .h-left span{font-size:11.5px;color:var(--muted);}
+  .err{color:var(--poor);font-size:12px;margin:-8px 0 12px;}
+  .helper{font-size:11.5px;color:var(--muted);margin:-8px 0 14px;}
+
+  .chart-card{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:14px 12px 8px;margin-bottom:20px;box-shadow:0 1px 3px rgba(0,0,0,0.04);}
+  .chart-card h3{margin:0 0 10px;font-size:12.5px;color:var(--muted);font-weight:700;text-transform:uppercase;letter-spacing:0.02em;}
+  .chart-empty{font-size:12.5px;color:var(--muted);text-align:center;padding:20px 0;}
+
+  .profile-card{display:flex;align-items:center;gap:12px;background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:12px;margin-bottom:10px;cursor:pointer;box-shadow:0 1px 3px rgba(0,0,0,0.04);}
+  .avatar{width:42px;height:42px;border-radius:50%;background:var(--turquoise);color:white;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:15px;flex-shrink:0;overflow:hidden;}
+  .avatar img{width:100%;height:100%;object-fit:cover;}
+  .profile-info{flex:1;min-width:0;}
+  .profile-name{font-weight:700;font-size:14px;margin:0 0 2px;}
+  .profile-sub{font-size:12px;color:var(--muted);margin:0;}
+  .profile-chevron{color:var(--muted);font-size:16px;}
+
+  .back-row{display:flex;align-items:center;gap:8px;margin-bottom:14px;cursor:pointer;}
+  .back-row span.arrow{font-size:16px;color:var(--turquoise-dark);}
+  .back-row span.label{font-size:13px;color:var(--turquoise-dark);font-weight:600;}
+
+  .profile-head{display:flex;align-items:center;gap:12px;margin-bottom:14px;}
+  .profile-head .avatar{width:64px;height:64px;font-size:22px;}
+  .profile-head h2{margin:0;font-size:17px;}
+  .profile-head p{margin:2px 0 0;font-size:12px;color:var(--muted);}
+
+  .info-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:18px;}
+  .info-item{background:var(--turquoise-tint);border-radius:8px;padding:8px 10px;}
+  .info-item .k{font-size:10px;color:var(--turquoise-dark);font-weight:700;text-transform:uppercase;}
+  .info-item .v{font-size:13px;font-weight:600;margin-top:2px;}
+
+  .section-tabs{display:flex;gap:6px;margin-bottom:14px;overflow-x:auto;}
+  .section-tabs button{flex-shrink:0;padding:7px 12px;border-radius:20px;border:1px solid var(--border);background:var(--surface);font-size:12px;color:var(--muted);cursor:pointer;}
+  .section-tabs button.active{background:var(--turquoise);color:white;border-color:var(--turquoise);}
+
+  /* ---- Master Plan / Periodization ---- */
+  .mp-card{display:flex;align-items:center;gap:12px;background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:13px 14px;margin-bottom:10px;box-shadow:0 1px 3px rgba(0,0,0,0.04);cursor:pointer;}
+  .mp-icon{width:42px;height:42px;border-radius:10px;background:var(--turquoise-tint);display:flex;align-items:center;justify-content:center;font-size:20px;flex-shrink:0;}
+  .mp-info{flex:1;min-width:0;}
+  .mp-info .name{font-weight:700;font-size:14px;margin:0 0 2px;}
+  .mp-info .meta{font-size:11.5px;color:var(--muted);margin:0 0 6px;}
+  .mp-badge{display:inline-block;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.02em;padding:3px 8px;border-radius:20px;background:var(--turquoise-tint);color:var(--turquoise-dark);margin-right:6px;}
+  .mp-progress{height:6px;border-radius:4px;background:var(--turquoise-tint);overflow:hidden;margin-top:6px;}
+  .mp-progress .fill{height:100%;background:var(--turquoise);border-radius:4px;}
+  .goal-hier{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:14px;margin-bottom:16px;}
+  .goal-row{display:flex;align-items:flex-start;gap:10px;padding:7px 0;border-bottom:1px dashed var(--border);}
+  .goal-row:last-child{border-bottom:none;}
+  .goal-tag{font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:0.03em;color:white;border-radius:6px;padding:3px 7px;flex-shrink:0;min-width:74px;text-align:center;}
+  .goal-tag.primary{background:var(--turquoise-dark);}
+  .goal-tag.secondary{background:var(--good);}
+  .goal-tag.maintenance{background:var(--muted);}
+  .goal-val{font-size:13.5px;font-weight:600;padding-top:1px;}
+  .rationale-box{background:var(--turquoise-tint);border-radius:10px;padding:12px 13px;margin-top:6px;}
+  .rationale-box p{margin:0 0 6px;font-size:12px;color:var(--turquoise-dark);font-weight:700;text-transform:uppercase;letter-spacing:0.02em;}
+  .rationale-box ul{margin:0;padding-left:18px;}
+  .rationale-box li{font-size:12.5px;color:var(--text);margin-bottom:3px;}
+  .phase-table{width:100%;border-collapse:collapse;margin-bottom:14px;font-size:11.5px;}
+  .phase-table th{background:var(--turquoise-tint);color:var(--turquoise-dark);text-transform:uppercase;font-size:9.5px;letter-spacing:0.02em;padding:7px 6px;text-align:left;}
+  .phase-table td{padding:8px 6px;border-bottom:1px solid var(--border);vertical-align:top;}
+  .phase-table tr.current-row td{background:var(--turquoise-tint);font-weight:700;}
+  .trend-block{margin-bottom:16px;}
+  .trend-block h3{font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:0.02em;margin:0 0 8px;}
+  .trend-row{display:flex;align-items:center;gap:8px;margin-bottom:6px;}
+  .trend-row .lbl{width:64px;flex-shrink:0;font-size:11px;color:var(--muted);}
+  .trend-row .bar-track{flex:1;height:10px;border-radius:6px;background:var(--turquoise-tint);overflow:hidden;display:flex;gap:2px;}
+  .trend-row .bar-track .seg{height:100%;border-radius:3px;background:var(--border);}
+  .trend-row .bar-track .seg.on{background:var(--turquoise);}
+  .meso-card{background:var(--surface);border:1px solid var(--border);border-left:4px solid var(--turquoise);border-radius:12px;padding:13px 14px;margin-bottom:10px;box-shadow:0 1px 3px rgba(0,0,0,0.04);}
+  .meso-card.deload{border-left-color:var(--average);}
+  .meso-card .mtitle{display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;}
+  .meso-card .mtitle b{font-size:13.5px;}
+  .meso-card .mtitle span{font-size:11px;color:var(--muted);}
+  .meso-tags{display:flex;flex-wrap:wrap;gap:5px;margin-top:8px;}
+  .meso-tags span{font-size:10.5px;background:var(--turquoise-tint);color:var(--turquoise-dark);border-radius:6px;padding:3px 7px;font-weight:600;}
+  .log-item{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:12px 13px;margin-bottom:10px;}
+  .log-item .lhead{display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;}
+  .log-item .lhead b{font-size:13px;}
+  .status-pill{font-size:10.5px;font-weight:700;padding:3px 9px;border-radius:20px;color:white;}
+  .log-item .lrow{display:flex;gap:14px;font-size:12px;color:var(--muted);margin-bottom:6px;}
+  .log-item .lrec{font-size:12px;background:var(--turquoise-tint);border-radius:8px;padding:8px 10px;color:var(--text);}
+  .delete-link{display:block;text-align:center;font-size:12.5px;color:var(--poor);font-weight:600;cursor:pointer;margin-top:18px;padding:10px;}
+
+  .photo-upload{display:flex;align-items:center;gap:12px;margin-bottom:16px;}
+  .photo-upload .avatar{width:64px;height:64px;font-size:22px;}
+  .photo-actions{display:flex;flex-direction:column;gap:6px;}
+  .photo-actions label.upload-btn{background:var(--turquoise-tint);color:var(--turquoise-dark);border-radius:8px;padding:8px 12px;font-size:12px;font-weight:600;cursor:pointer;text-align:center;}
+  .photo-actions button.remove-btn{background:none;border:none;color:var(--poor);font-size:11.5px;cursor:pointer;padding:0;text-align:left;}
+
+  .bodymap-toggle{display:flex;gap:6px;margin-bottom:12px;}
+  .bodymap-toggle button{flex:1;padding:8px;border-radius:8px;border:1px solid var(--border);background:var(--surface);font-size:12.5px;font-weight:600;color:var(--muted);cursor:pointer;}
+  .bodymap-toggle button.active{background:var(--turquoise);color:white;border-color:var(--turquoise);}
+  .bodymap-wrap{display:flex;justify-content:center;background:var(--turquoise-tint);border-radius:12px;padding:12px;margin-bottom:12px;}
+  .hotspot{cursor:pointer;fill:#8FD4CF;stroke:white;stroke-width:1.5;transition:fill 0.15s;}
+  .hotspot:hover{fill:var(--turquoise);}
+  .hotspot.injured{fill:var(--poor);}
+  .hotspot.selected{fill:var(--turquoise-dark);}
+  .injury-panel{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:14px;margin-bottom:16px;}
+  .injury-panel .selected-area{font-size:13px;color:var(--muted);margin-bottom:10px;}
+  .injury-panel .selected-area b{color:var(--text);}
+
+  .filter-row{display:flex;gap:6px;margin-bottom:12px;overflow-x:auto;}
+  .filter-row select{flex-shrink:0;border:1px solid var(--border);border-radius:8px;padding:7px 8px;font-size:12px;background:var(--surface);color:var(--text);}
+
+  .injury-row{background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:11px 12px;margin-bottom:8px;}
+  .injury-row-top{display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;}
+  .injury-row-top b{font-size:13.5px;}
+  .injury-row-meta{font-size:11.5px;color:var(--muted);}
+  .injury-row-notes{font-size:12px;color:var(--muted);margin-top:4px;font-style:italic;}
+
+  .before-after{display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-bottom:14px;}
+  .ba-card{background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:12px 8px;text-align:center;}
+  .ba-card .k{font-size:10px;color:var(--muted);font-weight:700;text-transform:uppercase;}
+  .ba-card .v{font-size:19px;font-weight:800;margin-top:4px;}
+  .ba-card.improve .v{color:var(--elite);}
+  .ba-card.decline .v{color:var(--poor);}
+
+  .toast{position:fixed;bottom:88px;left:50%;transform:translateX(-50%);background:var(--text);color:white;padding:9px 16px;border-radius:8px;font-size:13px;font-weight:500;box-shadow:0 8px 24px rgba(0,0,0,0.25);z-index:60;max-width:90%;text-align:center;}
+
+  /* ---- Auth screen ---- */
+  #auth-screen{
+    min-height:100vh;display:flex;flex-direction:column;align-items:center;justify-content:center;
+    padding:24px;background:#0A0A0A;
+  }
+  .auth-card{
+    background:#FFFFFF;border-radius:16px;padding:26px 22px;width:100%;max-width:360px;
+    box-shadow:0 12px 30px rgba(0,0,0,0.35);
+  }
+  .auth-logo{display:flex;flex-direction:column;align-items:center;gap:10px;margin-bottom:18px;}
+  .auth-logo img{width:56px;height:56px;border-radius:14px;}
+  .auth-logo h1{margin:0;font-size:17px;font-weight:800;text-align:center;}
+  .auth-logo p{margin:0;font-size:10.5px;color:var(--turquoise-dark);font-weight:700;letter-spacing:0.05em;text-transform:uppercase;}
+  .auth-tabs{display:flex;gap:6px;margin-bottom:16px;background:var(--bg);border-radius:9px;padding:3px;}
+  .auth-tabs button{flex:1;border:none;background:transparent;padding:8px;border-radius:7px;font-size:12.5px;font-weight:700;color:var(--muted);cursor:pointer;}
+  .auth-tabs button.active{background:var(--surface);color:var(--turquoise-dark);box-shadow:0 1px 3px rgba(0,0,0,0.12);}
+  .auth-msg{font-size:12px;margin:-6px 0 12px;min-height:14px;}
+  .auth-msg.error{color:var(--poor);}
+  .auth-msg.ok{color:var(--elite);}
+  .user-chip{
+    display:flex;align-items:center;gap:8px;background:var(--turquoise-tint);border-radius:20px;
+    padding:5px 10px 5px 5px;font-size:11px;color:var(--turquoise-dark);font-weight:700;margin-left:auto;
+  }
+  .user-chip .role-dot{width:6px;height:6px;border-radius:50%;background:var(--turquoise-dark);}
+  .logout-btn{background:none;border:none;color:var(--muted);font-size:10.5px;text-decoration:underline;cursor:pointer;padding:0;margin-left:6px;}
+  .config-warning{
+    background:#3A1D16;color:#FFD9CC;border-radius:10px;padding:12px;font-size:12px;line-height:1.5;
+    max-width:340px;text-align:center;margin-top:16px;
+  }
+</style>
+</head>
+<body>
+<div id="app"></div>
+<input type="file" id="hidden-file-input" accept="image/*" style="display:none" />
+
+<script>
+/* ==========================================================
+   FIGHT WITH JO — Supabase Data Layer
+   Backend: Supabase (PostgreSQL + Auth + Storage)
+   Skema database ada di file supabase/schema.sql
+========================================================== */
+
+// >>> ISI DENGAN KREDENSIAL PROJECT SUPABASE-MU <<<
+const SUPABASE_URL = "https://xjjezpqowglhfhdvvxxn.supabase.co";
+const SUPABASE_ANON_KEY = "sb_publishable_ZxbqKplk34cVPziZb3foYg_X_nhODCD";
+
+const sb = (SUPABASE_URL.includes("YOUR-PROJECT-REF") || !window.supabase)
+  ? null
+  : window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+const BUCKET = "athlete-assets";
+
+/* DB_KEYS dipertahankan supaya seluruh kode UI di bawah (yang memanggil
+   loadDB(DB_KEYS.athletes) dsb) tidak perlu diubah satu per satu —
+   loadDB() sekarang membaca dari cache in-memory yang diisi lewat
+   Supabase, bukan dari localStorage. */
+const DB_KEYS = { athletes:"athletes", tests:"tests", assessments:"assessments", injuries:"injuries" };
+
+let cache = { athletes:[], tests:[], assessments:[], injuries:[], testCategories:[], bodyParts:[], profile:null };
+
+function loadDB(key){ return cache[key] || []; }
+function uid(){ return Date.now().toString(36) + Math.random().toString(36).slice(2,7); }
+
+function slugify(s){
+  return s.toString().toLowerCase().trim()
+    .replace(/[^a-z0-9]+/g,"-").replace(/(^-|-$)/g,"") + "-" + Math.random().toString(36).slice(2,6);
+}
+
+/* ---------------- transformasi baris Supabase -> bentuk lama yang dipakai UI ---------------- */
+function mapTestRow(t){
+  const b = (t.test_benchmarks && t.test_benchmarks[0]) || { poor:0, average:0, good:0, elite:0 };
+  const cat = t.test_categories || {};
+  return {
+    id: t.id, name: t.name, unit: t.unit, desc: t.description || "",
+    iconKey: cat.slug || "other", icon: cat.icon || "🏅",
+    direction: t.higher_is_better ? "higher" : "lower",
+    categoryId: t.category_id,
+    benchmarks: { poor:Number(b.poor), average:Number(b.average), good:Number(b.good), elite:Number(b.elite) }
+  };
+}
+
+const STATUS_DB_TO_UI = { active:"Aktif", injured:"Cedera", recovering:"Istirahat", inactive:"Nonaktif", retired:"Pensiun" };
+const STATUS_UI_TO_DB = { Aktif:"active", Cedera:"injured", Istirahat:"recovering", Nonaktif:"inactive", Pensiun:"retired" };
+
+function mapAthleteRow(a){
+  let age = null;
+  if(a.date_of_birth){
+    age = Math.floor((Date.now() - new Date(a.date_of_birth).getTime()) / (365.25*86400000));
+  }
+  return {
+    id: a.id, code: a.athlete_code, name: a.full_name, photo: a.profile_photo_url,
+    sport: a.sport || "-", position: a.position || "-", gender: a.gender || "L",
+    age, height: a.height_cm, weight: a.weight_kg,
+    status: STATUS_DB_TO_UI[a.status] || "Aktif"
+  };
+}
+
+const SEVERITY_DB_TO_UI = { minor:"Ringan", moderate:"Sedang", severe:"Berat" };
+const SEVERITY_UI_TO_DB = { Ringan:"minor", Sedang:"moderate", Berat:"severe" };
+const INJSTATUS_DB_TO_UI = { active:"Aktif", recovering:"Recovering", cleared:"Sembuh", chronic:"Kronis" };
+const INJSTATUS_UI_TO_DB = { Aktif:"active", Recovering:"recovering", Sembuh:"cleared", Kronis:"chronic" };
+
+function mapInjuryRow(i){
+  const bp = i.body_parts || {};
+  return {
+    id: i.id, athleteId: i.athlete_id, bodyPart: bp.map_key, bodyPartLabel: bp.name,
+    view: bp.anatomy_view, injuryType: i.injury_type,
+    severity: SEVERITY_DB_TO_UI[i.severity] || i.severity,
+    status: INJSTATUS_DB_TO_UI[i.status] || i.status,
+    date: new Date(i.injury_date).getTime(),
+    notes: i.notes || ""
+  };
+}
+
+/* ---------------- pemuatan awal & refresh cache ---------------- */
+async function refreshReferenceData(){
+  const [{data:cats}, {data:parts}] = await Promise.all([
+    sb.from("test_categories").select("*").order("sort_order"),
+    sb.from("body_parts").select("*").order("sort_order")
+  ]);
+  cache.testCategories = cats || [];
+  cache.bodyParts = parts || [];
+}
+
+async function refreshTests(){
+  const { data, error } = await sb.from("tests")
+    .select("*, test_categories(name,icon,slug), test_benchmarks(*)")
+    .eq("is_active", true).order("created_at", {ascending:false});
+  if(error){ showToast("Gagal memuat kategori tes"); return; }
+  cache.tests = (data||[]).map(mapTestRow);
+}
+
+async function refreshAthletes(){
+  const { data, error } = await sb.from("athletes").select("*").order("created_at",{ascending:false});
+  if(error){ showToast("Gagal memuat data atlet"); return; }
+  cache.athletes = (data||[]).map(mapAthleteRow);
+}
+
+async function refreshAssessments(){
+  const { data, error } = await sb.from("performance_results")
+    .select("id, value, unit, athlete_id, test_id, assessments(assessment_date)")
+    .order("created_at", {ascending:false});
+  if(error){ showToast("Gagal memuat riwayat tes"); return; }
+  cache.assessments = (data||[]).map(r => {
+    const test = cache.tests.find(t => t.id === r.test_id);
+    const category = test ? computeCategory(test, r.value) : "Average";
+    return {
+      id: r.id, athleteId: r.athlete_id, testId: r.test_id,
+      date: r.assessments ? new Date(r.assessments.assessment_date).getTime() : Date.now(),
+      rawScore: Number(r.value), category
+    };
+  });
+}
+
+async function refreshInjuries(){
+  const { data, error } = await sb.from("injuries")
+    .select("*, body_parts(name, map_key, anatomy_view)")
+    .order("injury_date", {ascending:false});
+  if(error){ showToast("Gagal memuat data cedera"); return; }
+  cache.injuries = (data||[]).map(mapInjuryRow);
+}
+
+async function refreshAll(){
+  await refreshReferenceData();
+  await refreshTests();
+  await refreshAthletes();
+  await refreshAssessments();
+  await refreshInjuries();
+}
+
+/* ---------------- upload foto ke Supabase Storage ---------------- */
+async function uploadPhoto(athleteId, folder, blob, filename){
+  const path = `${athleteId}/${folder}/${Date.now()}-${filename}`;
+  const { error } = await sb.storage.from(BUCKET).upload(path, blob, { upsert:true, contentType: blob.type });
+  if(error){ showToast("Gagal unggah foto: " + error.message); return null; }
+  const { data } = sb.storage.from(BUCKET).getPublicUrl(path);
+  return { url: data.publicUrl, path };
+}
+
+function dataUrlToBlob(dataUrl){
+  const [meta, b64] = dataUrl.split(",");
+  const mime = meta.match(/data:(.*);base64/)[1];
+  const bin = atob(b64);
+  const arr = new Uint8Array(bin.length);
+  for(let i=0;i<bin.length;i++) arr[i] = bin.charCodeAt(i);
+  return new Blob([arr], {type:mime});
+}
+
+/* ==========================================================
+   Logika kategori performa (Poor / Average / Good / Elite)
+========================================================== */
+const CAT_META = {
+  Poor:{color:"var(--poor)"}, Average:{color:"var(--average)"},
+  Good:{color:"var(--good)"}, Elite:{color:"var(--elite)"}
+};
+function catColor(cat){
+  const m = { Poor:"#E24B4A", Average:"#EF9F27", Good:"#378ADD", Elite:"#1D9E75" };
+  return m[cat] || "#5B6664";
+}
+function computeCategory(test, rawScore){
+  const b = test.benchmarks; const higher = test.direction === "higher"; const score = Number(rawScore);
+  if(higher){ if(score>=b.elite) return "Elite"; if(score>=b.good) return "Good"; if(score>=b.average) return "Average"; return "Poor"; }
+  else { if(score<=b.elite) return "Elite"; if(score<=b.good) return "Good"; if(score<=b.average) return "Average"; return "Poor"; }
+}
+// improvement % — mendukung metric "semakin kecil semakin baik"
+function computeImprovement(test, before, after){
+  const higher = test.direction === "higher";
+  const diff = higher ? (after - before) : (before - after);
+  const pct = before !== 0 ? (diff / Math.abs(before)) * 100 : 0;
+  return { diff, pct };
+}
+
+/* ==========================================================
+   Body map — koordinat hotspot (skema sederhana, non-realistis)
+========================================================== */
+const BODY_PARTS_FRONT = [
+  {key:"head", label:"Head", x:100, y:28, r:14},
+  {key:"neck", label:"Neck", x:100, y:52, r:7},
+  {key:"shoulder_l", label:"Shoulder Left", x:68, y:72, r:9},
+  {key:"shoulder_r", label:"Shoulder Right", x:132, y:72, r:9},
+  {key:"chest", label:"Chest", x:100, y:95, r:13},
+  {key:"elbow_l", label:"Elbow Left", x:54, y:130, r:8},
+  {key:"elbow_r", label:"Elbow Right", x:146, y:130, r:8},
+  {key:"abdomen", label:"Abdomen", x:100, y:140, r:12},
+  {key:"wrist_l", label:"Wrist Left", x:45, y:175, r:7},
+  {key:"wrist_r", label:"Wrist Right", x:155, y:175, r:7},
+  {key:"hand_l", label:"Hand Left", x:42, y:192, r:7},
+  {key:"hand_r", label:"Hand Right", x:158, y:192, r:7},
+  {key:"hip_l", label:"Hip Left", x:82, y:180, r:9},
+  {key:"hip_r", label:"Hip Right", x:118, y:180, r:9},
+  {key:"knee_l", label:"Knee Left", x:84, y:250, r:9},
+  {key:"knee_r", label:"Knee Right", x:116, y:250, r:9},
+  {key:"ankle_l", label:"Ankle Left", x:84, y:315, r:7},
+  {key:"ankle_r", label:"Ankle Right", x:116, y:315, r:7},
+  {key:"foot_l", label:"Foot Left", x:84, y:335, r:8},
+  {key:"foot_r", label:"Foot Right", x:116, y:335, r:8}
+];
+const BODY_PARTS_BACK = [
+  {key:"neck_b", label:"Neck", x:100, y:52, r:7},
+  {key:"shoulder_lb", label:"Shoulder Left", x:68, y:72, r:9},
+  {key:"shoulder_rb", label:"Shoulder Right", x:132, y:72, r:9},
+  {key:"upper_back", label:"Upper Back", x:100, y:95, r:13},
+  {key:"lower_back", label:"Lower Back", x:100, y:140, r:12},
+  {key:"glute", label:"Glute", x:100, y:180, r:12},
+  {key:"hamstring_l", label:"Hamstring Left", x:84, y:225, r:9},
+  {key:"hamstring_r", label:"Hamstring Right", x:116, y:225, r:9},
+  {key:"calf_l", label:"Calf Left", x:84, y:285, r:8},
+  {key:"calf_r", label:"Calf Right", x:116, y:285, r:8},
+  {key:"achilles_l", label:"Achilles Left", x:84, y:320, r:6},
+  {key:"achilles_r", label:"Achilles Right", x:116, y:320, r:6}
+];
+
+function bodySilhouette(){
+  return `
+    <ellipse cx="100" cy="28" rx="16" ry="18" fill="#C7EBE8"/>
+    <rect x="80" y="46" width="40" height="14" rx="6" fill="#C7EBE8"/>
+    <path d="M60,60 Q100,50 140,60 L150,150 Q100,165 50,150 Z" fill="#C7EBE8"/>
+    <rect x="35" y="95" width="18" height="90" rx="9" fill="#C7EBE8"/>
+    <rect x="147" y="95" width="18" height="90" rx="9" fill="#C7EBE8"/>
+    <rect x="70" y="150" width="24" height="150" rx="11" fill="#C7EBE8"/>
+    <rect x="106" y="150" width="24" height="150" rx="11" fill="#C7EBE8"/>
+  `;
+}
+
+/* ==========================================================
+   State & routing
+========================================================== */
+let state = {
+  tab:"dashboard", modal:null,
+  athleteId:null, athleteSection:"overview",
+  profileTestId:null, baTestId:null,
+  bodyView:"front", selectedPart:null,
+  photoTarget:null, pendingPhoto:null,
+  filters:{ part:"", severity:"", status:"" },
+  mpId:null, mpSection:"overview"
+};
+let chartInstances = {};
+function destroyChart(id){ if(chartInstances[id]){ chartInstances[id].destroy(); delete chartInstances[id]; } }
+
+function render(){
+  const root = document.getElementById("app");
+  const role = cache.profile ? cache.profile.role : "viewer";
+  root.innerHTML = `
+    <header class="top">
+      <div class="logo"><img src="icon-192.png" alt="Fight With Jo"/></div>
+      <div>
+        <h1>FIGHT WITH JO</h1>
+        <p>Performance App</p>
+      </div>
+      <div class="user-chip">
+        <span class="role-dot"></span>${role}
+        <button class="logout-btn" onclick="handleLogout()">Keluar</button>
+      </div>
+      <button class="backup-btn" onclick="openModal('backup')">⬇</button>
+    </header>
+    <main id="main"></main>
+    ${state.tab === "tests" ? `<button class="fab" onclick="openModal('addTest')">+</button>` : ""}
+    ${state.tab === "masterplan" && !state.mpId ? `<button class="fab" onclick="openModal('addMasterplan')">+</button>` : ""}
+    <nav class="bottom">
+      ${navBtn("dashboard","📊","Dashboard")}
+      ${navBtn("athletes","👤","Atlet")}
+      ${navBtn("masterplan","🗓️","Master Plan")}
+      ${navBtn("tests","📋","Kategori Tes")}
+      ${navBtn("history","🕒","Riwayat")}
+    </nav>
+  `;
+  renderMain();
+  if(state.modal) renderModal();
+}
+function navBtn(key, icon, label){
+  return `<button class="${state.tab===key?'active':''}" onclick="setTab('${key}')"><span class="ic">${icon}</span><span>${label}</span></button>`;
+}
+function setTab(t){ state.tab = t; state.athleteId = null; state.mpId = null; render(); }
+function openModal(name, payload){ state.modal = {name, payload}; render(); }
+function closeModal(){ state.modal = null; render(); }
+function showToast(msg){
+  const t = document.createElement("div"); t.className = "toast"; t.textContent = msg;
+  document.body.appendChild(t); setTimeout(()=>t.remove(), 2200);
+}
+
+function renderMain(){
+  const main = document.getElementById("main");
+  if(state.tab === "dashboard") main.innerHTML = viewDashboard();
+  if(state.tab === "tests") main.innerHTML = viewTests();
+  if(state.tab === "athletes") main.innerHTML = state.athleteId ? viewAthleteDetail() : viewAthleteList();
+  if(state.tab === "history") main.innerHTML = viewHistory();
+  if(state.tab === "masterplan") main.innerHTML = state.mpId ? viewMasterplanDetail() : viewMasterplanList();
+
+  if(state.tab === "dashboard") drawDashboardChart();
+  if(state.tab === "athletes" && state.athleteId){
+    if(state.athleteSection === "performance") drawProfileChart();
+    if(state.athleteSection === "improvement") drawImprovementChart();
+  }
+}
+
+/* ---------------- DASHBOARD ---------------- */
+function viewDashboard(){
+  const athletes = loadDB(DB_KEYS.athletes);
+  const tests = loadDB(DB_KEYS.tests);
+  const assessments = loadDB(DB_KEYS.assessments);
+  const injuries = loadDB(DB_KEYS.injuries);
+
+  const weekAgo = Date.now() - 7*86400000;
+  const weekCount = assessments.filter(a => a.date >= weekAgo).length;
+  const activeInjuries = injuries.filter(i => i.status === "Aktif").length;
+
+  return `
+    <h2 class="page-title">Ringkasan</h2>
+    <div class="stat-grid">
+      <div class="stat-card"><div class="label">TOTAL ATLET</div><div class="value">${athletes.length}</div></div>
+      <div class="stat-card"><div class="label">KATEGORI TES</div><div class="value">${tests.length}</div></div>
+      <div class="stat-card"><div class="label">TES MINGGU INI</div><div class="value">${weekCount}</div></div>
+      <div class="stat-card"><div class="label">CEDERA AKTIF</div><div class="value" style="color:var(--poor)">${activeInjuries}</div></div>
+    </div>
+
+    <h2 class="page-title">Performance Overview</h2>
+    ${tests.length === 0 ? `<div class="chart-empty">Belum ada kategori tes.</div>` : tests.map(t => testCategoryCard(t, assessments)).join("")}
+
+    <h2 class="page-title" style="margin-top:20px;">Grafik Rata-rata Skor</h2>
+    <div class="chart-card">
+      ${assessments.length === 0 ? `<div class="chart-empty">Belum ada data untuk ditampilkan.</div>` : `<canvas id="chart-dashboard" height="180"></canvas>`}
+    </div>
+    <button class="btn" onclick="setTab('athletes')">Lihat Profil Atlet</button>
+  `;
+}
+
+function testCategoryCard(t, assessments){
+  const rows = assessments.filter(a => a.testId === t.id).sort((a,b)=>a.date-b.date);
+  const avg = rows.length ? (rows.reduce((s,a)=>s+a.rawScore,0)/rows.length).toFixed(1) : "-";
+  const last = rows[rows.length-1];
+  let trendHtml = `<span style="color:var(--muted)">–</span>`;
+  if(rows.length >= 2){
+    const prev = rows[rows.length-2];
+    const {pct} = computeImprovement(t, prev.rawScore, last.rawScore);
+    const sign = pct >= 0 ? "+" : "";
+    trendHtml = `<span style="color:${pct>=0?'var(--elite)':'var(--poor)'}">${sign}${pct.toFixed(1)}%</span>`;
+  }
+  return `
+    <div class="cat-card">
+      <div class="cat-icon">${t.icon}</div>
+      <div class="cat-info">
+        <p class="cat-name">${t.name}</p>
+        <p class="cat-meta">${rows.length} hasil tes ${last ? "· terakhir " + new Date(last.date).toLocaleDateString("id-ID",{day:"2-digit",month:"short"}) : ""}</p>
+      </div>
+      <div class="cat-trend"><div class="avg">${avg}</div>${trendHtml}</div>
+    </div>
+  `;
+}
+
+function drawDashboardChart(){
+  destroyChart("chart-dashboard");
+  const canvas = document.getElementById("chart-dashboard"); if(!canvas) return;
+  const tests = loadDB(DB_KEYS.tests); const assessments = loadDB(DB_KEYS.assessments);
+  const perTest = {};
+  assessments.forEach(a => {
+    if(!perTest[a.testId]) perTest[a.testId] = {total:0,count:0,catCount:{}};
+    perTest[a.testId].total += a.rawScore; perTest[a.testId].count += 1;
+    perTest[a.testId].catCount[a.category] = (perTest[a.testId].catCount[a.category]||0)+1;
+  });
+  const labels=[],data=[],colors=[];
+  Object.entries(perTest).forEach(([testId,agg])=>{
+    const t = tests.find(x=>x.id===testId); if(!t) return;
+    labels.push(t.name); data.push(Number((agg.total/agg.count).toFixed(1)));
+    const top = Object.entries(agg.catCount).sort((a,b)=>b[1]-a[1])[0][0];
+    colors.push(catColor(top));
+  });
+  chartInstances["chart-dashboard"] = new Chart(canvas, {
+    type:"bar",
+    data:{ labels, datasets:[{ label:"Rata-rata skor", data, backgroundColor:colors, borderRadius:6 }] },
+    options:{ responsive:true, plugins:{legend:{display:false}}, scales:{ y:{beginAtZero:true, ticks:{font:{size:10}}}, x:{ticks:{font:{size:10}}} } }
+  });
+}
+
+/* ---------------- KATEGORI TES ---------------- */
+function viewTests(){
+  const tests = loadDB(DB_KEYS.tests);
+  if(tests.length===0) return `<div class="empty"><b>Belum ada kategori tes</b>Tekan tombol + untuk menambah.</div>`;
+  return `
+    <h2 class="page-title">Kategori Tes Performa</h2>
+    <div class="card-list">
+      ${tests.map(t => `
+        <div class="test-card">
+          <div class="test-photo">${t.icon}</div>
+          <div class="test-info">
+            <p class="test-name">${t.name}</p>
+            <p class="test-desc">${t.desc}</p>
+            <p class="test-unit">Satuan: ${t.unit} · ${t.direction==='higher'?'semakin tinggi semakin baik':'semakin rendah semakin baik'}</p>
+          </div>
+        </div>
+      `).join("")}
+    </div>
+  `;
+}
+function modalAddTest(){
+  return `
+    <div class="modal-head"><h3>Tambah Kategori Tes</h3><button class="close-x" onclick="closeModal()">✕</button></div>
+    <div class="field"><label>Nama tes</label><input id="f-name" placeholder="Contoh: Push Up 1 Menit"/></div>
+    <div class="field">
+      <label>Kategori</label>
+      <select id="f-category">
+        ${cache.testCategories.map(c => `<option value="${c.id}">${c.icon} ${c.name}</option>`).join("")}
+      </select>
+    </div>
+    <div class="field-row">
+      <div class="field"><label>Satuan</label><input id="f-unit" placeholder="reps / detik / cm"/></div>
+      <div class="field">
+        <label>Arah skor lebih baik</label>
+        <select id="f-direction">
+          <option value="higher">Makin tinggi makin baik</option>
+          <option value="lower">Makin rendah makin baik</option>
+        </select>
+      </div>
+    </div>
+    <div class="field"><label>Deskripsi singkat</label><input id="f-desc" placeholder="Mengukur kekuatan otot lengan"/></div>
+    <div class="field-row">
+      <div class="field"><label>Ambang Poor</label><input id="f-poor" type="number" step="0.1"/></div>
+      <div class="field"><label>Ambang Average</label><input id="f-average" type="number" step="0.1"/></div>
+    </div>
+    <div class="field-row">
+      <div class="field"><label>Ambang Good</label><input id="f-good" type="number" step="0.1"/></div>
+      <div class="field"><label>Ambang Elite</label><input id="f-elite" type="number" step="0.1"/></div>
+    </div>
+    <div id="f-err" class="err" style="display:none;"></div>
+    <button class="btn" onclick="submitAddTest()">Simpan Kategori Tes</button>
+  `;
+}
+async function submitAddTest(){
+  const name = document.getElementById("f-name").value.trim();
+  const categoryId = document.getElementById("f-category").value;
+  const unit = document.getElementById("f-unit").value.trim();
+  const direction = document.getElementById("f-direction").value;
+  const desc = document.getElementById("f-desc").value.trim();
+  const poor = document.getElementById("f-poor").value, average = document.getElementById("f-average").value;
+  const good = document.getElementById("f-good").value, elite = document.getElementById("f-elite").value;
+  const errBox = document.getElementById("f-err");
+  if(!name || !unit || poor==="" || average==="" || good==="" || elite===""){
+    errBox.style.display="block"; errBox.textContent="Lengkapi nama, satuan, dan keempat ambang batas."; return;
+  }
+  const { data: testRow, error } = await sb.from("tests").insert({
+    category_id: categoryId, name, slug: slugify(name), unit,
+    higher_is_better: direction === "higher", description: desc
+  }).select().single();
+  if(error){ errBox.style.display="block"; errBox.textContent="Gagal menyimpan: " + error.message; return; }
+  await sb.from("test_benchmarks").insert({
+    test_id: testRow.id, poor:Number(poor), average:Number(average), good:Number(good), elite:Number(elite)
+  });
+  await refreshTests();
+  closeModal(); setTab("tests");
+  showToast("Kategori tes tersimpan");
+}
+
+/* ---------------- ATLET: DAFTAR ---------------- */
+function initials(name){ return name.split(" ").map(w=>w[0]).slice(0,2).join("").toUpperCase(); }
+function avatarHtml(a, size){
+  if(a.photo) return `<div class="avatar" style="width:${size}px;height:${size}px;"><img src="${a.photo}"/></div>`;
+  return `<div class="avatar" style="width:${size}px;height:${size}px;">${initials(a.name)}</div>`;
+}
+
+function viewAthleteList(){
+  const athletes = loadDB(DB_KEYS.athletes);
+  return `
+    <h2 class="page-title">Profil Atlet</h2>
+    ${athletes.map(a => `
+      <div class="profile-card" onclick="openAthlete('${a.id}')">
+        ${avatarHtml(a,42)}
+        <div class="profile-info">
+          <p class="profile-name">${a.name}</p>
+          <p class="profile-sub">${a.sport} · ${a.position} · ${a.status}</p>
+        </div>
+        <span class="profile-chevron">›</span>
+      </div>
+    `).join("")}
+    <button class="btn ghost" style="margin-top:10px;" onclick="openModal('addAthlete')">+ Tambah Atlet Baru</button>
+  `;
+}
+function openAthlete(id){ state.tab="athletes"; state.athleteId=id; state.athleteSection="overview"; state.selectedPart=null; render(); }
+function backToAthleteList(){ state.athleteId=null; render(); }
+function setAthleteSection(s){ state.athleteSection=s; state.selectedPart=null; render(); }
+
+function modalAddAthlete(){
+  return `
+    <div class="modal-head"><h3>Tambah Atlet</h3><button class="close-x" onclick="closeModal()">✕</button></div>
+    <div class="photo-upload">
+      <div class="avatar" id="new-athlete-avatar" style="width:64px;height:64px;">?</div>
+      <div class="photo-actions">
+        <label class="upload-btn">Unggah Foto<input type="file" accept="image/*" style="display:none" onchange="handleNewAthletePhoto(event)"/></label>
+      </div>
+    </div>
+    <div class="field"><label>Nama atlet</label><input id="a-name" placeholder="Nama lengkap"/></div>
+    <div class="field-row">
+      <div class="field"><label>Cabang olahraga</label><input id="a-sport" placeholder="Muay Thai"/></div>
+      <div class="field"><label>Posisi</label><input id="a-position" placeholder="-"/></div>
+    </div>
+    <div class="field-row3">
+      <div class="field"><label>Gender</label><select id="a-gender"><option value="L">Laki-laki</option><option value="P">Perempuan</option></select></div>
+      <div class="field"><label>Usia</label><input id="a-age" type="number" placeholder="20"/></div>
+      <div class="field"><label>Status</label>
+        <select id="a-status">
+          <option>Aktif</option><option>Cedera</option><option>Istirahat</option><option>Nonaktif</option><option>Pensiun</option>
+        </select>
+      </div>
+    </div>
+    <div class="field-row">
+      <div class="field"><label>Tinggi (cm)</label><input id="a-height" type="number" placeholder="175"/></div>
+      <div class="field"><label>Berat (kg)</label><input id="a-weight" type="number" placeholder="68"/></div>
+    </div>
+    <div id="a-err" class="err" style="display:none;"></div>
+    <button class="btn" id="a-submit-btn" onclick="submitAddAthlete()">Simpan Atlet</button>
+  `;
+}
+let pendingNewPhoto = null;
+function handleNewAthletePhoto(e){
+  const file = e.target.files[0]; if(!file) return;
+  resizeImage(file, 300, (dataUrl) => {
+    pendingNewPhoto = dataUrl;
+    document.getElementById("new-athlete-avatar").innerHTML = `<img src="${dataUrl}" style="width:100%;height:100%;object-fit:cover;border-radius:50%;"/>`;
+  });
+}
+function resizeImage(file, maxSize, callback){
+  const reader = new FileReader();
+  reader.onload = (e) => {
+    const img = new Image();
+    img.onload = () => {
+      let w = img.width, h = img.height;
+      if(w > h){ if(w > maxSize){ h = Math.round(h*maxSize/w); w = maxSize; } }
+      else { if(h > maxSize){ w = Math.round(w*maxSize/h); h = maxSize; } }
+      const canvas = document.createElement("canvas"); canvas.width = w; canvas.height = h;
+      canvas.getContext("2d").drawImage(img, 0, 0, w, h);
+      callback(canvas.toDataURL("image/jpeg", 0.8));
+    };
+    img.src = e.target.result;
+  };
+  reader.readAsDataURL(file);
+}
+async function nextAthleteCode(){
+  const { count } = await sb.from("athletes").select("id", {count:"exact", head:true});
+  return "FWJ-" + String((count||0) + 1).padStart(3,"0");
+}
+async function submitAddAthlete(){
+  const name = document.getElementById("a-name").value.trim();
+  const errBox = document.getElementById("a-err");
+  if(!name){ errBox.style.display="block"; errBox.textContent="Isi nama atlet terlebih dahulu."; return; }
+  const btn = document.getElementById("a-submit-btn"); btn.disabled = true; btn.textContent = "Menyimpan...";
+
+  const age = Number(document.getElementById("a-age").value) || null;
+  const dob = age ? new Date(Date.now() - age*365.25*86400000).toISOString().slice(0,10) : null;
+  const athleteCode = await nextAthleteCode();
+
+  const { data: row, error } = await sb.from("athletes").insert({
+    athlete_code: athleteCode, full_name: name,
+    sport: document.getElementById("a-sport").value.trim() || "-",
+    position: document.getElementById("a-position").value.trim() || "-",
+    gender: document.getElementById("a-gender").value,
+    date_of_birth: dob,
+    height_cm: Number(document.getElementById("a-height").value) || null,
+    weight_kg: Number(document.getElementById("a-weight").value) || null,
+    status: STATUS_UI_TO_DB[document.getElementById("a-status").value] || "active"
+  }).select().single();
+
+  if(error){ errBox.style.display="block"; errBox.textContent="Gagal menyimpan: " + error.message; btn.disabled=false; btn.textContent="Simpan Atlet"; return; }
+
+  if(pendingNewPhoto){
+    const blob = dataUrlToBlob(pendingNewPhoto);
+    const uploaded = await uploadPhoto(row.id, "profile", blob, "photo.jpg");
+    if(uploaded) await sb.from("athletes").update({ profile_photo_url: uploaded.url }).eq("id", row.id);
+  }
+  pendingNewPhoto = null;
+  await refreshAthletes();
+  closeModal(); setTab("athletes");
+  showToast("Atlet tersimpan");
+}
+
+/* ---------------- ATLET: DETAIL ---------------- */
+function viewAthleteDetail(){
+  const athletes = loadDB(DB_KEYS.athletes);
+  const a = athletes.find(x=>x.id===state.athleteId);
+  if(!a){ state.athleteId=null; return viewAthleteList(); }
+
+  return `
+    <div class="back-row" onclick="backToAthleteList()"><span class="arrow">‹</span><span class="label">Semua atlet</span></div>
+    <div class="profile-head">
+      ${avatarHtml(a,64)}
+      <div>
+        <h2>${a.name}</h2>
+        <p>${a.sport} · ${a.position} · ID ${a.id.toUpperCase().slice(0,6)}</p>
+      </div>
+    </div>
+    <div class="info-grid">
+      <div class="info-item"><div class="k">Gender</div><div class="v">${a.gender==='L'?'Laki-laki':'Perempuan'}</div></div>
+      <div class="info-item"><div class="k">Usia</div><div class="v">${a.age||'-'} tahun</div></div>
+      <div class="info-item"><div class="k">Tinggi / Berat</div><div class="v">${a.height||'-'}cm / ${a.weight||'-'}kg</div></div>
+      <div class="info-item"><div class="k">Status</div><div class="v">${a.status}</div></div>
+    </div>
+
+    <div class="section-tabs">
+      <button class="${state.athleteSection==='overview'?'active':''}" onclick="setAthleteSection('overview')">Ringkasan</button>
+      <button class="${state.athleteSection==='performance'?'active':''}" onclick="setAthleteSection('performance')">Grafik Performa</button>
+      <button class="${state.athleteSection==='improvement'?'active':''}" onclick="setAthleteSection('improvement')">Before/After</button>
+      <button class="${state.athleteSection==='injury'?'active':''}" onclick="setAthleteSection('injury')">Cedera</button>
+      <button class="${state.athleteSection==='photo'?'active':''}" onclick="setAthleteSection('photo')">Foto Profil</button>
+    </div>
+
+    <div id="athlete-section-body">
+      ${state.athleteSection==='overview' ? athleteOverview(a) : ""}
+      ${state.athleteSection==='performance' ? athletePerformanceSection(a) : ""}
+      ${state.athleteSection==='improvement' ? athleteImprovementSection(a) : ""}
+      ${state.athleteSection==='injury' ? athleteInjurySection(a) : ""}
+      ${state.athleteSection==='photo' ? athletePhotoSection(a) : ""}
+    </div>
+  `;
+}
+
+function athleteOverview(a){
+  const all = loadDB(DB_KEYS.assessments).filter(x=>x.athleteId===a.id);
+  const injuries = loadDB(DB_KEYS.injuries).filter(x=>x.athleteId===a.id);
+  const dist = {Poor:0,Average:0,Good:0,Elite:0};
+  all.forEach(x=>{ if(dist[x.category]!==undefined) dist[x.category]++; });
+  return `
+    <div class="stat-grid">
+      <div class="stat-card"><div class="label">TOTAL HASIL TES</div><div class="value">${all.length}</div></div>
+      <div class="stat-card"><div class="label">CEDERA TERCATAT</div><div class="value" style="color:var(--poor)">${injuries.length}</div></div>
+    </div>
+    <div class="dist-row" style="display:flex;gap:6px;margin-bottom:18px;">
+      ${Object.entries(dist).map(([k,v])=>`<div style="flex:1;background:${catColor(k)};border-radius:10px;padding:10px 6px;text-align:center;color:white;"><div style="font-size:17px;font-weight:700;">${v}</div><div style="font-size:9.5px;">${k}</div></div>`).join("")}
+    </div>
+    <button class="btn" onclick="openModal('addAssessment', '${a.id}')">+ Input Hasil Tes Baru</button>
+  `;
+}
+
+function athletePerformanceSection(a){
+  const tests = loadDB(DB_KEYS.tests);
+  const all = loadDB(DB_KEYS.assessments).filter(x=>x.athleteId===a.id);
+  const testsWithData = tests.filter(t=>all.some(x=>x.testId===t.id));
+  if(!state.profileTestId && testsWithData.length>0) state.profileTestId = testsWithData[0].id;
+  if(testsWithData.length===0) return `<div class="chart-card"><div class="chart-empty">Belum ada hasil tes untuk atlet ini.</div></div>`;
+  return `
+    <div class="chart-card">
+      <h3>Grafik Progres per Tes</h3>
+      <div class="field" style="margin-bottom:10px;">
+        <select onchange="state.profileTestId=this.value; renderMain();">
+          ${testsWithData.map(t=>`<option value="${t.id}" ${t.id===state.profileTestId?"selected":""}>${t.name}</option>`).join("")}
+        </select>
+      </div>
+      <canvas id="chart-profile" height="180"></canvas>
+    </div>
+  `;
+}
+function drawProfileChart(){
+  destroyChart("chart-profile");
+  const canvas = document.getElementById("chart-profile"); if(!canvas) return;
+  const tests = loadDB(DB_KEYS.tests); const test = tests.find(t=>t.id===state.profileTestId); if(!test) return;
+  const rows = loadDB(DB_KEYS.assessments).filter(a=>a.athleteId===state.athleteId && a.testId===test.id).sort((a,b)=>a.date-b.date);
+  const labels = rows.map(a=>new Date(a.date).toLocaleDateString("id-ID",{day:"2-digit",month:"short"}));
+  const data = rows.map(a=>a.rawScore);
+  const pointColors = rows.map(a=>catColor(a.category));
+  chartInstances["chart-profile"] = new Chart(canvas, {
+    type:"line",
+    data:{ labels, datasets:[{ label:`${test.name} (${test.unit})`, data, borderColor:"#20B2AA", backgroundColor:"rgba(32,178,170,0.08)", pointBackgroundColor:pointColors, pointRadius:5, pointHoverRadius:6, tension:0.25, fill:true }] },
+    options:{ responsive:true, plugins:{legend:{display:false}}, scales:{ y:{ticks:{font:{size:10}}}, x:{ticks:{font:{size:10}}} } }
+  });
+}
+
+function athleteImprovementSection(a){
+  const tests = loadDB(DB_KEYS.tests);
+  const all = loadDB(DB_KEYS.assessments).filter(x=>x.athleteId===a.id);
+  const testsWithData = tests.filter(t=>all.filter(x=>x.testId===t.id).length>=2);
+  if(!state.baTestId && testsWithData.length>0) state.baTestId = testsWithData[0].id;
+  if(testsWithData.length===0) return `<div class="chart-card"><div class="chart-empty">Butuh minimal 2 hasil tes pada kategori yang sama untuk membandingkan Before vs After.</div></div>`;
+
+  const test = tests.find(t=>t.id===state.baTestId);
+  const rows = all.filter(x=>x.testId===test.id).sort((a,b)=>a.date-b.date);
+  const before = rows[0], after = rows[rows.length-1];
+  const {diff, pct} = computeImprovement(test, before.rawScore, after.rawScore);
+  const improving = pct >= 0;
+
+  return `
+    <div class="field" style="margin-bottom:12px;">
+      <select onchange="state.baTestId=this.value; renderMain();">
+        ${testsWithData.map(t=>`<option value="${t.id}" ${t.id===state.baTestId?"selected":""}>${t.name}</option>`).join("")}
+      </select>
+    </div>
+    <div class="before-after">
+      <div class="ba-card"><div class="k">Before</div><div class="v">${before.rawScore}</div></div>
+      <div class="ba-card"><div class="k">After</div><div class="v">${after.rawScore}</div></div>
+      <div class="ba-card ${improving?'improve':'decline'}"><div class="k">Improvement</div><div class="v">${improving?'+':''}${pct.toFixed(1)}%</div></div>
+    </div>
+    ${!improving ? `<div class="err" style="margin-bottom:12px;">⚠ Performa menurun dibanding tes pertama.</div>` : ""}
+    <div class="chart-card">
+      <h3>Grafik Perkembangan (Assessment 1 → ${rows.length})</h3>
+      <canvas id="chart-improvement" height="180"></canvas>
+    </div>
+  `;
+}
+function drawImprovementChart(){
+  destroyChart("chart-improvement");
+  const canvas = document.getElementById("chart-improvement"); if(!canvas) return;
+  const tests = loadDB(DB_KEYS.tests); const test = tests.find(t=>t.id===state.baTestId); if(!test) return;
+  const rows = loadDB(DB_KEYS.assessments).filter(a=>a.athleteId===state.athleteId && a.testId===test.id).sort((a,b)=>a.date-b.date);
+  const labels = rows.map((a,i)=>`Tes ${i+1}`);
+  const data = rows.map(a=>a.rawScore);
+  chartInstances["chart-improvement"] = new Chart(canvas, {
+    type:"line",
+    data:{ labels, datasets:[{ label:`${test.name}`, data, borderColor:"#159A94", backgroundColor:"rgba(21,154,148,0.1)", pointRadius:5, tension:0.2, fill:true }] },
+    options:{ responsive:true, plugins:{ legend:{display:false}, tooltip:{ callbacks:{ label:(ctx)=>{
+      const idx = ctx.dataIndex; const val = ctx.raw; const prev = idx>0 ? data[idx-1] : null;
+      if(prev===null) return `Skor: ${val} ${test.unit}`;
+      const {pct} = computeImprovement(test, prev, val);
+      return [`Skor: ${val} ${test.unit}`, `Sebelumnya: ${prev} ${test.unit}`, `Perubahan: ${pct>=0?'+':''}${pct.toFixed(1)}%`];
+    } } } }, scales:{ y:{ticks:{font:{size:10}}}, x:{ticks:{font:{size:10}}} } }
+  });
+}
+
+/* ---------------- CEDERA / BODY MAP ---------------- */
+function athleteInjurySection(a){
+  const injuries = loadDB(DB_KEYS.injuries).filter(x=>x.athleteId===a.id);
+  const parts = state.bodyView==="front" ? BODY_PARTS_FRONT : BODY_PARTS_BACK;
+  const injuredKeys = new Set(injuries.filter(i=>i.status!=="Sembuh").map(i=>i.bodyPart));
+
+  return `
+    <div class="bodymap-toggle">
+      <button class="${state.bodyView==='front'?'active':''}" onclick="state.bodyView='front'; state.selectedPart=null; renderMain();">Front View</button>
+      <button class="${state.bodyView==='back'?'active':''}" onclick="state.bodyView='back'; state.selectedPart=null; renderMain();">Back View</button>
+    </div>
+    <div class="bodymap-wrap">
+      <svg width="200" height="360" viewBox="0 0 200 360">
+        ${bodySilhouette()}
+        ${parts.map(p => `
+          <circle class="hotspot ${injuredKeys.has(p.key)?'injured':''} ${state.selectedPart===p.key?'selected':''}"
+            cx="${p.x}" cy="${p.y}" r="${p.r}"
+            onclick="selectBodyPart('${p.key}','${p.label}')"><title>${p.label}</title></circle>
+        `).join("")}
+      </svg>
+    </div>
+    ${state.selectedPart ? injuryFormPanel(a, parts) : `<div class="helper" style="text-align:center;">Tap bagian tubuh untuk mencatat cedera.</div>`}
+
+    <h2 class="page-title" style="margin-top:22px;">Injury History</h2>
+    ${injuryFilters()}
+    ${injuryHistoryTable(injuries)}
+  `;
+}
+function selectBodyPart(key, label){ state.selectedPart = key; state.selectedPartLabel = label; render(); }
+
+function injuryFormPanel(a, parts){
+  const part = parts.find(p=>p.key===state.selectedPart);
+  return `
+    <div class="injury-panel">
+      <div class="selected-area">Selected Area: <b>${part.label}</b></div>
+      <div class="field"><label>Jenis cedera</label><input id="inj-type" placeholder="Contoh: Knee Pain"/></div>
+      <div class="field-row">
+        <div class="field"><label>Severity</label><select id="inj-severity"><option value="Ringan">Minor</option><option value="Sedang">Moderate</option><option value="Berat">Severe</option></select></div>
+        <div class="field"><label>Status</label><select id="inj-status"><option value="Aktif">Active</option><option value="Recovering">Recovering</option><option value="Sembuh">Cleared</option></select></div>
+      </div>
+      <div class="field"><label>Tanggal cedera</label><input id="inj-date" type="date" value="${new Date().toISOString().slice(0,10)}"/></div>
+      <div class="field"><label>Catatan</label><textarea id="inj-notes" rows="2" placeholder="Pain during jumping movement"></textarea></div>
+      <div class="field"><label>Foto cedera (opsional)</label><input type="file" accept="image/*" onchange="handleInjuryPhoto(event)"/></div>
+      <button class="btn" onclick="submitInjury('${a.id}')">Simpan Cedera</button>
+    </div>
+  `;
+}
+let pendingInjuryPhoto = null;
+function handleInjuryPhoto(e){
+  const file = e.target.files[0]; if(!file) return;
+  resizeImage(file, 400, (dataUrl) => { pendingInjuryPhoto = dataUrl; showToast("Foto siap disimpan"); });
+}
+function deriveBodySide(key){
+  if(key.endsWith("_l") || key.endsWith("_lb")) return "left";
+  if(key.endsWith("_r") || key.endsWith("_rb")) return "right";
+  return "center";
+}
+async function submitInjury(athleteId){
+  const type = document.getElementById("inj-type").value.trim();
+  if(!type){ showToast("Isi jenis cedera terlebih dahulu"); return; }
+
+  const bp = cache.bodyParts.find(p => p.map_key === state.selectedPart && p.anatomy_view === state.bodyView);
+  if(!bp){ showToast("Bagian tubuh tidak dikenali, coba pilih ulang."); return; }
+
+  const severity = document.getElementById("inj-severity").value;
+  const status = document.getElementById("inj-status").value;
+  const dateVal = document.getElementById("inj-date").value;
+  const notes = document.getElementById("inj-notes").value.trim();
+
+  const { data: row, error } = await sb.from("injuries").insert({
+    athlete_id: athleteId, body_part_id: bp.id, body_side: deriveBodySide(state.selectedPart),
+    injury_type: type, severity: SEVERITY_UI_TO_DB[severity], status: INJSTATUS_UI_TO_DB[status],
+    injury_date: dateVal, notes
+  }).select().single();
+
+  if(error){ showToast("Gagal menyimpan: " + error.message); return; }
+
+  if(pendingInjuryPhoto){
+    const blob = dataUrlToBlob(pendingInjuryPhoto);
+    const uploaded = await uploadPhoto(athleteId, "injury", blob, "injury.jpg");
+    if(uploaded){
+      await sb.from("athlete_files").insert({
+        athlete_id: athleteId, file_name: `injury-${bp.name}-${dateVal}.jpg`,
+        file_type: "image/jpeg", category: "injury", storage_provider: "supabase",
+        storage_path: uploaded.path
+      });
+    }
+  }
+
+  pendingInjuryPhoto = null; state.selectedPart = null;
+  await refreshInjuries();
+  showToast("Cedera tersimpan"); render();
+}
+
+function injuryFilters(){
+  const allParts = [...BODY_PARTS_FRONT, ...BODY_PARTS_BACK];
+  const uniqueParts = [...new Map(allParts.map(p=>[p.label,p])).values()];
+  return `
+    <div class="filter-row">
+      <select onchange="state.filters.part=this.value; render();">
+        <option value="">Semua bagian tubuh</option>
+        ${uniqueParts.map(p=>`<option value="${p.label}" ${state.filters.part===p.label?"selected":""}>${p.label}</option>`).join("")}
+      </select>
+      <select onchange="state.filters.severity=this.value; render();">
+        <option value="">Semua severity</option>
+        <option ${state.filters.severity==='Ringan'?'selected':''}>Ringan</option>
+        <option ${state.filters.severity==='Sedang'?'selected':''}>Sedang</option>
+        <option ${state.filters.severity==='Berat'?'selected':''}>Berat</option>
+      </select>
+      <select onchange="state.filters.status=this.value; render();">
+        <option value="">Semua status</option>
+        <option ${state.filters.status==='Aktif'?'selected':''}>Aktif</option>
+        <option ${state.filters.status==='Recovering'?'selected':''}>Recovering</option>
+        <option ${state.filters.status==='Sembuh'?'selected':''}>Sembuh</option>
+      </select>
+    </div>
+  `;
+}
+function statusColor(status){ return {Aktif:"#E24B4A", Recovering:"#378ADD", Sembuh:"#1D9E75"}[status] || "#5B6664"; }
+function severityColor(sev){ return {Ringan:"#EF9F27", Sedang:"#E2841F", Berat:"#E24B4A"}[sev] || "#5B6664"; }
+
+function injuryHistoryTable(injuries){
+  let rows = injuries;
+  if(state.filters.part) rows = rows.filter(i=>i.bodyPartLabel===state.filters.part);
+  if(state.filters.severity) rows = rows.filter(i=>i.severity===state.filters.severity);
+  if(state.filters.status) rows = rows.filter(i=>i.status===state.filters.status);
+  rows = rows.sort((a,b)=>b.date-a.date);
+  if(rows.length===0) return `<div class="chart-empty">Tidak ada catatan cedera.</div>`;
+  return rows.map(i => `
+    <div class="injury-row">
+      <div class="injury-row-top">
+        <b>${i.bodyPartLabel} · ${i.injuryType}</b>
+        <span class="badge" style="background:${statusColor(i.status)}">${i.status}</span>
+      </div>
+      <div class="injury-row-meta">${new Date(i.date).toLocaleDateString("id-ID",{day:"2-digit",month:"short",year:"numeric"})} · <span style="color:${severityColor(i.severity)};font-weight:600;">${i.severity}</span></div>
+      ${i.notes ? `<div class="injury-row-notes">${i.notes}</div>` : ""}
+    </div>
+  `).join("");
+}
+
+/* ---------------- FOTO PROFIL ---------------- */
+function athletePhotoSection(a){
+  return `
+    <div class="chart-card">
+      <h3>Foto Profil</h3>
+      <div class="photo-upload">
+        ${avatarHtml(a,64)}
+        <div class="photo-actions">
+          <label class="upload-btn">Ganti Foto<input type="file" accept="image/*" style="display:none" onchange="handleAthletePhotoChange(event,'${a.id}')"/></label>
+          ${a.photo ? `<button class="remove-btn" onclick="removeAthletePhoto('${a.id}')">Hapus foto</button>` : ""}
+        </div>
+      </div>
+      <div class="helper">Foto tersimpan di Supabase Storage (otomatis dikompres), tersinkron di semua perangkat yang login.</div>
+    </div>
+  `;
+}
+function handleAthletePhotoChange(e, athleteId){
+  const file = e.target.files[0]; if(!file) return;
+  resizeImage(file, 300, async (dataUrl) => {
+    showToast("Mengunggah foto...");
+    const blob = dataUrlToBlob(dataUrl);
+    const uploaded = await uploadPhoto(athleteId, "profile", blob, "photo.jpg");
+    if(!uploaded) return;
+    await sb.from("athletes").update({ profile_photo_url: uploaded.url }).eq("id", athleteId);
+    await refreshAthletes();
+    showToast("Foto tersimpan"); render();
+  });
+}
+async function removeAthletePhoto(athleteId){
+  await sb.from("athletes").update({ profile_photo_url: null }).eq("id", athleteId);
+  await refreshAthletes();
+  showToast("Foto dihapus"); render();
+}
+
+/* ---------------- INPUT HASIL TES (modal, dari halaman atlet) ---------------- */
+function modalAddAssessment(athleteId){
+  const tests = loadDB(DB_KEYS.tests);
+  if(tests.length===0) return `<div class="modal-head"><h3>Input Hasil Tes</h3><button class="close-x" onclick="closeModal()">✕</button></div><div class="chart-empty">Tambahkan kategori tes dulu di tab "Kategori Tes".</div>`;
+  return `
+    <div class="modal-head"><h3>Input Hasil Tes</h3><button class="close-x" onclick="closeModal()">✕</button></div>
+    <div class="field">
+      <label>Kategori tes</label>
+      <select id="in-test">${tests.map(t=>`<option value="${t.id}">${t.icon} ${t.name} (${t.unit})</option>`).join("")}</select>
+    </div>
+    <div class="field"><label>Skor mentah</label><input id="in-score" type="number" step="0.1" placeholder="Masukkan angka hasil tes"/></div>
+    <div id="in-err" class="err" style="display:none;"></div>
+    <button class="btn" onclick="submitAssessment('${athleteId}')">Simpan Hasil Tes</button>
+    <div id="in-result"></div>
+  `;
+}
+async function submitAssessment(athleteId){
+  const testId = document.getElementById("in-test").value;
+  const score = document.getElementById("in-score").value;
+  const errBox = document.getElementById("in-err");
+  if(score==="" || isNaN(Number(score))){ errBox.style.display="block"; errBox.textContent="Masukkan skor hasil tes yang valid."; return; }
+  errBox.style.display="none";
+  const test = cache.tests.find(t=>t.id===testId);
+  const category = computeCategory(test, score);
+  const today = new Date().toISOString().slice(0,10);
+
+  const { data: assessRow, error: err1 } = await sb.from("assessments").insert({
+    athlete_id: athleteId, assessment_name: `${test.name} - ${today}`,
+    assessment_date: today, assessment_type: "periodic"
+  }).select().single();
+  if(err1){ errBox.style.display="block"; errBox.textContent="Gagal menyimpan: " + err1.message; return; }
+
+  const { error: err2 } = await sb.from("performance_results").insert({
+    assessment_id: assessRow.id, athlete_id: athleteId, test_id: testId,
+    value: Number(score), unit: test.unit
+  });
+  if(err2){ errBox.style.display="block"; errBox.textContent="Gagal menyimpan: " + err2.message; return; }
+
+  await refreshAssessments();
+  closeModal(); state.athleteSection="overview"; render();
+  showToast(`Tersimpan · ${category}`);
+}
+
+/* ---------------- RIWAYAT (semua atlet) ---------------- */
+function viewHistory(){
+  const assessments = loadDB(DB_KEYS.assessments);
+  const athletes = loadDB(DB_KEYS.athletes);
+  const tests = loadDB(DB_KEYS.tests);
+  if(assessments.length===0) return `<div class="empty"><b>Belum ada riwayat</b>Hasil tes yang kamu simpan akan muncul di sini.</div>`;
+  return `
+    <h2 class="page-title">Riwayat Semua Hasil Tes</h2>
+    ${assessments.sort((a,b)=>b.date-a.date).map(a => {
+      const u = athletes.find(x=>x.id===a.athleteId); const t = tests.find(x=>x.id===a.testId);
+      const dateStr = new Date(a.date).toLocaleDateString("id-ID",{day:"2-digit",month:"short",year:"numeric"});
+      return `
+        <div class="history-row">
+          <div class="h-left">
+            <b>${u?u.name:"Atlet"} · ${t?t.name:"Tes"}</b>
+            <span>${dateStr} · ${a.rawScore} ${t?t.unit:""}</span>
+          </div>
+          <span class="badge" style="background:${catColor(a.category)}">${a.category}</span>
+        </div>
+      `;
+    }).join("")}
+  `;
+}
+
+/* ---------------- CADANGAN DATA ---------------- */
+function modalBackup(){
+  return `
+    <div class="modal-head"><h3>Cadangan Data</h3><button class="close-x" onclick="closeModal()">✕</button></div>
+    <p style="font-size:12.5px;color:var(--muted);margin-top:0;">Data aplikasi sekarang tersimpan terpusat di Supabase (bukan di HP ini saja), otomatis tersinkron di semua perangkat yang login. Tombol di bawah hanya untuk mengunduh salinan/arsip.</p>
+    <button class="btn" onclick="exportBackup()">⬇ Unduh Salinan Data (.json)</button>
+    <div class="helper" style="margin-top:14px;">Backup basis data sesungguhnya (termasuk kemungkinan pulih ke titik waktu tertentu) dikelola otomatis oleh Supabase di dashboard project-mu.</div>
+  `;
+}
+function exportBackup(){
+  const data = {
+    athletes: cache.athletes, tests: cache.tests,
+    assessments: cache.assessments, injuries: cache.injuries,
+    exportedAt: new Date().toISOString()
+  };
+  const blob = new Blob([JSON.stringify(data,null,2)], {type:"application/json"});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a"); a.href = url; a.download = `fwj-data-${new Date().toISOString().slice(0,10)}.json`;
+  document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
+  showToast("Salinan data diunduh");
+}
+
+/* ==========================================================
+   MASTER PLAN — AI Sports Periodization Engine
+   Disimpan lokal (localStorage) di browser masing-masing pelatih.
+========================================================== */
+const MP_KEY = "fwj_masterplans_v1";
+function loadMasterplans(){ try{ return JSON.parse(localStorage.getItem(MP_KEY)) || []; }catch(e){ return []; } }
+function saveMasterplans(list){ localStorage.setItem(MP_KEY, JSON.stringify(list)); }
+function genId(prefix){ return prefix + "_" + Date.now().toString(36) + Math.random().toString(36).slice(2,8); }
+
+const GOAL_OPTIONS = [
+  "General Fitness","Hypertrophy","Maximal Strength","Strength Endurance","Power","Speed",
+  "Acceleration","Agility / Change of Direction","Aerobic Endurance","Anaerobic Capacity",
+  "Repeated Sprint Ability","Mobility","Injury Prevention","Sport-specific Performance","Competition Peak"
+];
+const LEVEL_OPTIONS = ["Pemula","Intermediate","Advanced","Elite"];
+
+const MODEL_LABEL = { traditional:"Traditional / American", block:"Block Periodization", nonlinear:"Non-linear / Undulating" };
+const MODEL_ICON = { traditional:"🟦", block:"🟩", nonlinear:"🟧" };
+
+const TRADITIONAL_PHASES = [
+  {label:"General Preparation", pct:0.20, volume:"High", intensity:"Low", specificity:"Low", focus:"Adaptasi umum & work capacity"},
+  {label:"Hypertrophy / Anatomical Adaptation", pct:0.15, volume:"High", intensity:"Moderate", specificity:"Low", focus:"Massa otot & fondasi kekuatan"},
+  {label:"Strength", pct:0.20, volume:"Moderate", intensity:"High", specificity:"Moderate", focus:"Maximal strength"},
+  {label:"Power", pct:0.15, volume:"Moderate", intensity:"High", specificity:"High", focus:"Explosive strength / power"},
+  {label:"Peaking", pct:0.10, volume:"Low", intensity:"High", specificity:"High", focus:"Konsolidasi performa puncak"},
+  {label:"Competition", pct:0.10, volume:"Low", intensity:"High", specificity:"High", focus:"Kompetisi utama"},
+  {label:"Transition", pct:0.10, volume:"Low", intensity:"Low", specificity:"Low", focus:"Recovery & regenerasi"}
+];
+const BLOCK_PHASES = [
+  {label:"Accumulation", pct:0.40, volume:"High", intensity:"Moderate", specificity:"Low", focus:"Hypertrophy / General Strength / Aerobic base / Work capacity"},
+  {label:"Transmutation", pct:0.35, volume:"Moderate", intensity:"High", specificity:"Moderate", focus:"Maximal strength / Speed-strength / Power / Anaerobic capacity"},
+  {label:"Realization", pct:0.25, volume:"Low", intensity:"High", specificity:"High", focus:"Competition specificity, peak performance, taper"}
+];
+
+function levelWeight(level){ return {"Pemula":1,"Intermediate":2,"Advanced":3,"Elite":4}[level] || 1; }
+
+function recommendModel(input){
+  const reasons = [];
+  const weeks = Number(input.durationWeeks) || 0;
+  const trainingAge = Number(input.trainingAge) || 0;
+  const lvl = levelWeight(input.level);
+  const needsSimultaneous = input.secondaryGoal && input.maintenanceGoal && input.secondaryGoal !== input.maintenanceGoal;
+  let model, confidence = 65;
+
+  if(input.level === "Pemula" || weeks <= 8){
+    model = "traditional"; confidence = 78;
+    reasons.push("Level pemula atau durasi program pendek paling cocok dengan progresi linear yang jelas tahap demi tahap.");
+    reasons.push("Atlet membutuhkan adaptasi anatomis dasar sebelum menangani kompleksitas model lain.");
+  } else if(needsSimultaneous && lvl >= 3){
+    model = "nonlinear"; confidence = 74;
+    reasons.push("Atlet perlu mempertahankan beberapa kualitas fisik (secondary & maintenance) secara simultan.");
+    reasons.push("Level Advanced/Elite mampu mentoleransi variasi stimulus harian/mingguan tanpa kehilangan fokus adaptasi.");
+  } else if(trainingAge >= 3 && lvl >= 2){
+    model = "block"; confidence = 80;
+    reasons.push("Training age memadai untuk fokus terkonsentrasi per blok (accumulation → transmutation → realization).");
+    reasons.push("Kalender program cukup panjang untuk menjalankan sekuens blok tanpa mengorbankan kualitas lain (maintenance dose).");
+  } else {
+    model = "traditional"; confidence = 60;
+    reasons.push("Kombinasi level dan training age saat ini paling sesuai dengan pendekatan progresif standar.");
+  }
+  reasons.push(`Primary goal "${input.primaryGoal}" mendukung struktur fase model ini.`);
+  if(confidence < 70) reasons.push("Hybrid periodization mungkin lebih sesuai — pertimbangkan evaluasi ulang di tengah program.");
+  return {model, reasons, confidence};
+}
+
+function buildPhaseWeeks(phaseTemplate, totalWeeks){
+  const out = []; let cursor = 1;
+  phaseTemplate.forEach((p, idx) => {
+    let len = Math.max(1, Math.round(p.pct * totalWeeks));
+    if(idx === phaseTemplate.length - 1) len = totalWeeks - cursor + 1;
+    if(len < 1) len = 1;
+    const weekStart = cursor, weekEnd = Math.min(totalWeeks, cursor + len - 1);
+    out.push({ ...p, weekStart, weekEnd });
+    cursor = weekEnd + 1;
+  });
+  return out.filter(p => p.weekStart <= totalWeeks);
+}
+
+function buildMesocycles(phases, model){
+  const meso = [];
+  phases.forEach((ph, i) => {
+    const totalLen = ph.weekEnd - ph.weekStart + 1;
+    let cursor = ph.weekStart, blockNum = 1;
+    while(cursor <= ph.weekEnd){
+      const len = Math.min(4, ph.weekEnd - cursor + 1);
+      const wEnd = cursor + len - 1;
+      const isDeload = len >= 4;
+      meso.push({
+        id: genId("meso"), phaseLabel: ph.label, blockLabel: `${ph.label}${totalLen>4 ? " — Blok " + blockNum : ""}`,
+        weekStart: cursor, weekEnd: wEnd, volume: ph.volume, intensity: ph.intensity,
+        specificity: ph.specificity, focus: ph.focus, deload: isDeload, model
+      });
+      cursor = wEnd + 1; blockNum++;
+    }
+  });
+  return meso;
+}
+
+function generateMasterplanData(input){
+  const durationWeeks = Number(input.durationWeeks);
+  let resolvedModel = input.model, autoReasons = [], confidence = null;
+  if(input.model === "auto"){
+    const rec = recommendModel(input);
+    resolvedModel = rec.model; autoReasons = rec.reasons; confidence = rec.confidence;
+  } else {
+    autoReasons = [`Model dipilih manual oleh pelatih: ${MODEL_LABEL[input.model]}.`];
+  }
+
+  let phases;
+  if(resolvedModel === "traditional") phases = buildPhaseWeeks(TRADITIONAL_PHASES, durationWeeks);
+  else if(resolvedModel === "block") phases = buildPhaseWeeks(BLOCK_PHASES, durationWeeks);
+  else phases = buildPhaseWeeks([
+    {label:"Undulating Cycle", pct:1, volume:"Bergelombang", intensity:"Bergelombang", specificity:"Meningkat", focus:"Hypertrophy ↔ Strength ↔ Power ↔ Speed (rotasi harian/mingguan)"}
+  ], durationWeeks);
+
+  const mesocycles = buildMesocycles(phases, resolvedModel);
+
+  return {
+    id: genId("mp"),
+    athleteId: input.athleteId, athleteName: input.athleteName,
+    sport: input.sport, level: input.level, trainingAge: input.trainingAge,
+    startDate: input.startDate, durationWeeks,
+    trainingDaysPerWeek: input.trainingDaysPerWeek,
+    primaryGoal: input.primaryGoal, secondaryGoal: input.secondaryGoal, maintenanceGoal: input.maintenanceGoal,
+    competitionName: input.competitionName, competitionDate: input.competitionDate,
+    modelInput: input.model, resolvedModel, confidence, reasons: autoReasons,
+    phases, mesocycles, weeklyLogs: [],
+    createdAt: Date.now()
+  };
+}
+
+function currentWeekOf(mp){
+  const start = new Date(mp.startDate).getTime();
+  if(isNaN(start)) return 1;
+  const diffDays = Math.floor((Date.now() - start) / 86400000);
+  const wk = Math.floor(diffDays / 7) + 1;
+  return Math.min(mp.durationWeeks, Math.max(1, wk));
+}
+function mesoForWeek(mp, week){ return mp.mesocycles.find(m => week >= m.weekStart && week <= m.weekEnd); }
+function phaseForWeek(mp, week){ return mp.phases.find(p => week >= p.weekStart && week <= p.weekEnd); }
+
+/* ---------------- MASTER PLAN: DAFTAR ---------------- */
+function viewMasterplanList(){
+  const plans = loadMasterplans();
+  if(plans.length === 0){
+    return `<div class="empty"><b>Belum ada Master Plan</b>Tekan tombol + untuk membuat masterplan periodisasi latihan atlet.</div>`;
+  }
+  return `
+    <h2 class="page-title">Master Plan — Periodisasi Latihan</h2>
+    <div class="card-list">
+      ${plans.map(mp => {
+        const wk = currentWeekOf(mp);
+        const phase = phaseForWeek(mp, wk);
+        const pct = Math.round((wk / mp.durationWeeks) * 100);
+        return `
+        <div class="mp-card" onclick="openMasterplan('${mp.id}')">
+          <div class="mp-icon">${MODEL_ICON[mp.resolvedModel]}</div>
+          <div class="mp-info">
+            <p class="name">${mp.athleteName}</p>
+            <p class="meta">${mp.sport} · ${mp.level}</p>
+            <span class="mp-badge">${MODEL_LABEL[mp.resolvedModel]}</span>
+            <span class="mp-badge" style="background:var(--turquoise-tint);">Minggu ${wk}/${mp.durationWeeks}</span>
+            <div class="mp-progress"><div class="fill" style="width:${pct}%"></div></div>
+          </div>
+        </div>`;
+      }).join("")}
+    </div>
+  `;
+}
+function openMasterplan(id){ state.tab="masterplan"; state.mpId=id; state.mpSection="overview"; render(); }
+function backToMasterplanList(){ state.mpId=null; render(); }
+function setMpSection(s){ state.mpSection=s; render(); }
+
+/* ---------------- MASTER PLAN: TAMBAH (MODAL) ---------------- */
+function modalAddMasterplan(){
+  const athletes = loadDB(DB_KEYS.athletes);
+  return `
+    <div class="modal-head"><h3>Buat Master Plan</h3><button class="close-x" onclick="closeModal()">✕</button></div>
+    <div class="field">
+      <label>Atlet</label>
+      <select id="mp-athlete" onchange="mpAutofillSport()">
+        <option value="">Pilih atlet…</option>
+        ${athletes.map(a=>`<option value="${a.id}" data-sport="${a.sport||''}">${a.name}</option>`).join("")}
+      </select>
+    </div>
+    <div class="field-row">
+      <div class="field"><label>Cabang olahraga</label><input id="mp-sport" placeholder="Muay Thai"/></div>
+      <div class="field"><label>Level</label>
+        <select id="mp-level">${LEVEL_OPTIONS.map(l=>`<option value="${l}">${l}</option>`).join("")}</select>
+      </div>
+    </div>
+    <div class="field-row">
+      <div class="field"><label>Training Age (tahun)</label><input id="mp-trainingage" type="number" min="0" placeholder="2"/></div>
+      <div class="field"><label>Hari latihan/minggu</label><input id="mp-days" type="number" min="1" max="7" placeholder="4"/></div>
+    </div>
+    <div class="field-row">
+      <div class="field"><label>Tanggal mulai program</label><input id="mp-start" type="date"/></div>
+      <div class="field"><label>Durasi (minggu)</label><input id="mp-weeks" type="number" min="1" placeholder="12"/></div>
+    </div>
+    <div class="field"><label>Primary Goal</label>
+      <select id="mp-primary">${GOAL_OPTIONS.map(g=>`<option value="${g}">${g}</option>`).join("")}</select>
+    </div>
+    <div class="field-row">
+      <div class="field"><label>Secondary Goal</label>
+        <select id="mp-secondary">${GOAL_OPTIONS.map(g=>`<option value="${g}">${g}</option>`).join("")}</select>
+      </div>
+      <div class="field"><label>Maintenance Goal</label>
+        <select id="mp-maintenance">${GOAL_OPTIONS.map(g=>`<option value="${g}">${g}</option>`).join("")}</select>
+      </div>
+    </div>
+    <div class="field-row">
+      <div class="field"><label>Kompetisi utama</label><input id="mp-compname" placeholder="Contoh: Kejurnas 2026"/></div>
+      <div class="field"><label>Tanggal kompetisi</label><input id="mp-compdate" type="date"/></div>
+    </div>
+    <div class="field">
+      <label>Model Periodisasi</label>
+      <select id="mp-model">
+        <option value="auto">🤖 Auto — biarkan sistem merekomendasikan</option>
+        <option value="traditional">🟦 Traditional / American</option>
+        <option value="block">🟩 Block Periodization</option>
+        <option value="nonlinear">🟧 Non-linear / Undulating</option>
+      </select>
+    </div>
+    <div id="mp-err" class="err" style="display:none;"></div>
+    <button class="btn" onclick="submitAddMasterplan()">Buat Master Plan</button>
+  `;
+}
+function mpAutofillSport(){
+  const sel = document.getElementById("mp-athlete");
+  const opt = sel.options[sel.selectedIndex];
+  const sport = opt ? opt.getAttribute("data-sport") : "";
+  if(sport) document.getElementById("mp-sport").value = sport;
+}
+function submitAddMasterplan(){
+  const athleteSel = document.getElementById("mp-athlete");
+  const athleteId = athleteSel.value;
+  const athleteName = athleteId ? athleteSel.options[athleteSel.selectedIndex].textContent : "";
+  const sport = document.getElementById("mp-sport").value.trim();
+  const level = document.getElementById("mp-level").value;
+  const trainingAge = document.getElementById("mp-trainingage").value;
+  const trainingDaysPerWeek = document.getElementById("mp-days").value;
+  const startDate = document.getElementById("mp-start").value;
+  const durationWeeks = document.getElementById("mp-weeks").value;
+  const primaryGoal = document.getElementById("mp-primary").value;
+  const secondaryGoal = document.getElementById("mp-secondary").value;
+  const maintenanceGoal = document.getElementById("mp-maintenance").value;
+  const competitionName = document.getElementById("mp-compname").value.trim();
+  const competitionDate = document.getElementById("mp-compdate").value;
+  const model = document.getElementById("mp-model").value;
+  const errBox = document.getElementById("mp-err");
+
+  if(!athleteId || !sport || !startDate || !durationWeeks || !trainingDaysPerWeek){
+    errBox.style.display="block"; errBox.textContent="Lengkapi atlet, cabang olahraga, tanggal mulai, durasi, dan hari latihan/minggu."; return;
+  }
+  const mp = generateMasterplanData({
+    athleteId, athleteName, sport, level, trainingAge, trainingDaysPerWeek,
+    startDate, durationWeeks, primaryGoal, secondaryGoal, maintenanceGoal,
+    competitionName, competitionDate, model
+  });
+  const list = loadMasterplans(); list.push(mp); saveMasterplans(list);
+  closeModal();
+  openMasterplan(mp.id);
+  showToast("Master Plan dibuat");
+}
+function deleteMasterplan(id){
+  if(!confirm("Hapus master plan ini? Data tidak dapat dikembalikan.")) return;
+  const list = loadMasterplans().filter(m=>m.id!==id);
+  saveMasterplans(list);
+  backToMasterplanList();
+  showToast("Master Plan dihapus");
+}
+
+/* ---------------- MASTER PLAN: DETAIL ---------------- */
+function viewMasterplanDetail(){
+  const mp = loadMasterplans().find(m=>m.id===state.mpId);
+  if(!mp){ state.mpId=null; return viewMasterplanList(); }
+  const wk = currentWeekOf(mp);
+
+  return `
+    <div class="back-row" onclick="backToMasterplanList()"><span class="arrow">‹</span><span class="label">Semua Master Plan</span></div>
+    <div class="profile-head">
+      <div class="mp-icon" style="width:56px;height:56px;font-size:24px;">${MODEL_ICON[mp.resolvedModel]}</div>
+      <div>
+        <h2>${mp.athleteName}</h2>
+        <p>${mp.sport} · ${mp.level} · ${MODEL_LABEL[mp.resolvedModel]}</p>
+      </div>
+    </div>
+    <div class="info-grid">
+      <div class="info-item"><div class="k">Program</div><div class="v">${mp.durationWeeks} minggu</div></div>
+      <div class="info-item"><div class="k">Minggu Berjalan</div><div class="v">${wk} / ${mp.durationWeeks}</div></div>
+      <div class="info-item"><div class="k">Hari Latihan</div><div class="v">${mp.trainingDaysPerWeek}x / minggu</div></div>
+      <div class="info-item"><div class="k">Kompetisi Utama</div><div class="v">${mp.competitionName || "-"}</div></div>
+    </div>
+
+    <div class="section-tabs">
+      <button class="${state.mpSection==='overview'?'active':''}" onclick="setMpSection('overview')">Ringkasan</button>
+      <button class="${state.mpSection==='macrocycle'?'active':''}" onclick="setMpSection('macrocycle')">Macrocycle</button>
+      <button class="${state.mpSection==='mesocycle'?'active':''}" onclick="setMpSection('mesocycle')">Mesocycle</button>
+      <button class="${state.mpSection==='monitoring'?'active':''}" onclick="setMpSection('monitoring')">Monitoring</button>
+    </div>
+
+    <div id="mp-section-body">
+      ${state.mpSection==='overview' ? mpOverviewSection(mp, wk) : ""}
+      ${state.mpSection==='macrocycle' ? mpMacrocycleSection(mp, wk) : ""}
+      ${state.mpSection==='mesocycle' ? mpMesocycleSection(mp, wk) : ""}
+      ${state.mpSection==='monitoring' ? mpMonitoringSection(mp, wk) : ""}
+    </div>
+    <span class="delete-link" onclick="deleteMasterplan('${mp.id}')">🗑 Hapus Master Plan</span>
+  `;
+}
+
+function mpOverviewSection(mp, wk){
+  const phase = phaseForWeek(mp, wk);
+  return `
+    <div class="goal-hier">
+      <div class="goal-row"><span class="goal-tag primary">Primary</span><span class="goal-val">${mp.primaryGoal || "-"}</span></div>
+      <div class="goal-row"><span class="goal-tag secondary">Secondary</span><span class="goal-val">${mp.secondaryGoal || "-"}</span></div>
+      <div class="goal-row"><span class="goal-tag maintenance">Maintenance</span><span class="goal-val">${mp.maintenanceGoal || "-"}</span></div>
+    </div>
+
+    <div class="rationale-box">
+      <p>Periodization Rationale</p>
+      <ul>${mp.reasons.map(r=>`<li>${r}</li>`).join("")}</ul>
+      ${mp.confidence!==null ? `<div class="helper" style="margin-top:8px;">Confidence rekomendasi AI: <b>${mp.confidence}%</b></div>` : ""}
+    </div>
+
+    <div class="chart-card">
+      <h3>Fase Saat Ini</h3>
+      <p style="margin:0 0 4px;font-weight:700;font-size:14px;">${phase ? phase.label : "-"}</p>
+      <p style="margin:0;font-size:12px;color:var(--muted);">${phase ? phase.focus : ""}</p>
+      ${phase ? `<div class="mp-progress" style="margin-top:10px;"><div class="fill" style="width:${Math.round((wk/mp.durationWeeks)*100)}%"></div></div>` : ""}
+    </div>
+
+    <div class="info-grid">
+      <div class="info-item"><div class="k">Kompetisi</div><div class="v">${mp.competitionName || "Belum diisi"}</div></div>
+      <div class="info-item"><div class="k">Tanggal Kompetisi</div><div class="v">${mp.competitionDate ? new Date(mp.competitionDate).toLocaleDateString("id-ID",{day:"2-digit",month:"short",year:"numeric"}) : "DATA REQUIRED"}</div></div>
+    </div>
+  `;
+}
+
+function trendBars(level3){
+  // level3: "Low" | "Moderate" | "High" | lainnya (non-terukur -> tampil abu-abu semua nyala sebagian)
+  const map = {"Low":1,"Moderate":2,"High":3};
+  const n = map[level3] || 2;
+  let segs = "";
+  for(let i=1;i<=3;i++) segs += `<div class="seg ${i<=n?'on':''}" style="flex:1;"></div>`;
+  return `<div class="bar-track">${segs}</div>`;
+}
+
+function mpMacrocycleSection(mp, wk){
+  return `
+    <table class="phase-table">
+      <thead><tr><th>Phase</th><th>Minggu</th><th>Fokus</th><th>Vol</th><th>Int</th><th>Spec</th></tr></thead>
+      <tbody>
+        ${mp.phases.map(p => `
+          <tr class="${wk>=p.weekStart && wk<=p.weekEnd ? 'current-row':''}">
+            <td>${p.label}</td>
+            <td>${p.weekStart}–${p.weekEnd}</td>
+            <td>${p.focus}</td>
+            <td>${p.volume}</td>
+            <td>${p.intensity}</td>
+            <td>${p.specificity}</td>
+          </tr>
+        `).join("")}
+      </tbody>
+    </table>
+
+    <div class="trend-block">
+      <h3>Volume Trend</h3>
+      ${mp.phases.map(p=>`<div class="trend-row"><span class="lbl">${p.label.split(" ")[0]}</span>${trendBars(p.volume)}</div>`).join("")}
+    </div>
+    <div class="trend-block">
+      <h3>Intensity Trend</h3>
+      ${mp.phases.map(p=>`<div class="trend-row"><span class="lbl">${p.label.split(" ")[0]}</span>${trendBars(p.intensity)}</div>`).join("")}
+    </div>
+    <div class="trend-block">
+      <h3>Specificity Trend</h3>
+      ${mp.phases.map(p=>`<div class="trend-row"><span class="lbl">${p.label.split(" ")[0]}</span>${trendBars(p.specificity)}</div>`).join("")}
+    </div>
+  `;
+}
+
+function mpMesocycleSection(mp, wk){
+  return `
+    <div class="card-list">
+      ${mp.mesocycles.map((m,i) => `
+        <div class="meso-card ${m.deload ? '' : ''}" style="${wk>=m.weekStart && wk<=m.weekEnd ? 'box-shadow:0 0 0 2px var(--turquoise) inset;' : ''}">
+          <div class="mtitle"><b>Mesocycle ${i+1} — ${m.blockLabel}</b><span>Minggu ${m.weekStart}–${m.weekEnd}</span></div>
+          <p style="margin:0;font-size:12.5px;color:var(--muted);">${m.focus}</p>
+          <div class="meso-tags">
+            <span>Volume: ${m.volume}</span>
+            <span>Intensity: ${m.intensity}</span>
+            <span>Specificity: ${m.specificity}</span>
+            ${m.weekEnd - m.weekStart + 1 >= 4 ? `<span>Deload: Minggu ${m.weekEnd}</span>` : ""}
+          </div>
+        </div>
+      `).join("")}
+    </div>
+  `;
+}
+
+function computeAdjustment(plannedRPE, actualRPE){
+  const diff = actualRPE - plannedRPE;
+  if(diff >= 2) return {status:"Fatigue Tinggi", color:"var(--poor)", rec:"Kurangi volume sesi berikutnya sekitar 15–20%. Tambahkan waktu recovery dan evaluasi tidur/soreness sebelum melanjutkan progresi."};
+  if(diff === 1) return {status:"Fatigue Sedang", color:"var(--average)", rec:"Pertahankan intensity, kurangi volume accessory ±10%. Pantau recovery dalam 24 jam ke depan."};
+  if(diff === 0) return {status:"Sesuai Rencana", color:"var(--good)", rec:"Tidak perlu perubahan besar. Lanjutkan progresi sesuai rencana mesocycle."};
+  return {status:"Di Bawah Target", color:"var(--elite)", rec:"Performa/kesiapan lebih baik dari prediksi. Pertimbangkan sedikit penambahan beban atau volume pada sesi berikutnya."};
+}
+
+function mpMonitoringSection(mp, wk){
+  const currentMeso = mesoForWeek(mp, wk);
+  const logs = [...mp.weeklyLogs].sort((a,b)=>b.week-a.week);
+  return `
+    <button class="btn ghost" style="margin-bottom:14px;" onclick="openModal('addWeeklyLog', {mpId:'${mp.id}', week:${wk}})">+ Input Monitoring Minggu ${wk}</button>
+    ${currentMeso ? `<div class="helper" style="margin-top:-8px;">Mesocycle aktif: <b>${currentMeso.blockLabel}</b> (Volume ${currentMeso.volume}, Intensity ${currentMeso.intensity})</div>` : ""}
+    ${logs.length === 0 ? `<div class="chart-empty">Belum ada data monitoring. Input RPE terencana vs aktual tiap minggu untuk mendapat rekomendasi penyesuaian otomatis.</div>` : `
+      <div class="card-list" style="margin-top:14px;">
+        ${logs.map(l => {
+          const adj = computeAdjustment(l.plannedRPE, l.actualRPE);
+          return `
+          <div class="log-item">
+            <div class="lhead"><b>Minggu ${l.week}</b><span class="status-pill" style="background:${adj.color}">${adj.status}</span></div>
+            <div class="lrow"><span>Planned RPE: <b style="color:var(--text)">${l.plannedRPE}</b></span><span>Actual RPE: <b style="color:var(--text)">${l.actualRPE}</b></span></div>
+            ${l.note ? `<div class="lrow"><span>Catatan: ${l.note}</span></div>` : ""}
+            <div class="lrec"><b>Rekomendasi:</b> ${adj.rec}</div>
+          </div>`;
+        }).join("")}
+      </div>
+    `}
+  `;
+}
+
+function modalAddWeeklyLog(payload){
+  return `
+    <div class="modal-head"><h3>Monitoring Minggu ${payload.week}</h3><button class="close-x" onclick="closeModal()">✕</button></div>
+    <div class="field-row">
+      <div class="field"><label>Planned RPE</label><input id="wl-planned" type="number" min="1" max="10" placeholder="7"/></div>
+      <div class="field"><label>Actual RPE</label><input id="wl-actual" type="number" min="1" max="10" placeholder="8"/></div>
+    </div>
+    <div class="field"><label>Catatan (opsional)</label><textarea id="wl-note" rows="3" placeholder="Kondisi tidur, soreness, adherence, dll."></textarea></div>
+    <div id="wl-err" class="err" style="display:none;"></div>
+    <button class="btn" onclick="submitWeeklyLog('${payload.mpId}', ${payload.week})">Simpan & Hitung Rekomendasi</button>
+  `;
+}
+function submitWeeklyLog(mpId, week){
+  const planned = Number(document.getElementById("wl-planned").value);
+  const actual = Number(document.getElementById("wl-actual").value);
+  const note = document.getElementById("wl-note").value.trim();
+  const errBox = document.getElementById("wl-err");
+  if(!planned || !actual){ errBox.style.display="block"; errBox.textContent="Isi Planned RPE dan Actual RPE."; return; }
+  const list = loadMasterplans();
+  const mp = list.find(m=>m.id===mpId);
+  if(!mp){ closeModal(); return; }
+  mp.weeklyLogs = mp.weeklyLogs.filter(l=>l.week!==week);
+  mp.weeklyLogs.push({ week, plannedRPE:planned, actualRPE:actual, note, loggedAt: Date.now() });
+  saveMasterplans(list);
+  closeModal();
+  state.mpSection = "monitoring";
+  render();
+  showToast("Monitoring tersimpan");
+}
+
+/* ---------------- MODAL WRAPPER ---------------- */
+function renderModal(){
+  const overlay = document.createElement("div");
+  overlay.className = "modal-overlay";
+  overlay.onclick = (e) => { if(e.target===overlay) closeModal(); };
+  const modal = document.createElement("div"); modal.className = "modal"; modal.onclick = (e)=>e.stopPropagation();
+  if(state.modal.name==="addTest") modal.innerHTML = modalAddTest();
+  if(state.modal.name==="addAthlete") modal.innerHTML = modalAddAthlete();
+  if(state.modal.name==="addAssessment") modal.innerHTML = modalAddAssessment(state.modal.payload);
+  if(state.modal.name==="backup") modal.innerHTML = modalBackup();
+  if(state.modal.name==="addMasterplan") modal.innerHTML = modalAddMasterplan();
+  if(state.modal.name==="addWeeklyLog") modal.innerHTML = modalAddWeeklyLog(state.modal.payload);
+  overlay.appendChild(modal);
+  document.getElementById("app").appendChild(overlay);
+}
+
+/* ---------------- AUTENTIKASI ---------------- */
+let authState = { mode:"login", loading:false, msg:"", msgType:"" };
+
+function renderAuthScreen(){
+  const root = document.getElementById("app");
+  const configMissing = !sb;
+  root.innerHTML = `
+    <div id="auth-screen">
+      <div class="auth-card">
+        <div class="auth-logo">
+          <img src="icon-192.png" alt="Fight With Jo"/>
+          <h1>FIGHT WITH JO</h1>
+          <p>Performance App</p>
+        </div>
+        ${configMissing ? `
+          <div class="config-warning">
+            Aplikasi belum terhubung ke Supabase. Buka file <b>index.html</b>, isi
+            <code>SUPABASE_URL</code> dan <code>SUPABASE_ANON_KEY</code> di bagian atas
+            script dengan kredensial project Supabase-mu.
+          </div>
+        ` : `
+          <div class="auth-tabs">
+            <button class="${authState.mode==='login'?'active':''}" onclick="authState.mode='login'; authState.msg=''; renderAuthScreen();">Masuk</button>
+            <button class="${authState.mode==='signup'?'active':''}" onclick="authState.mode='signup'; authState.msg=''; renderAuthScreen();">Daftar</button>
+          </div>
+          ${authState.mode==='signup' ? `<div class="field"><label>Nama lengkap</label><input id="auth-name" placeholder="Nama kamu"/></div>` : ""}
+          <div class="field"><label>Email</label><input id="auth-email" type="email" placeholder="coach@fightwithjo.com"/></div>
+          <div class="field"><label>Password</label><input id="auth-password" type="password" placeholder="Minimal 6 karakter"/></div>
+          ${authState.msg ? `<div class="auth-msg ${authState.msgType}">${authState.msg}</div>` : `<div class="auth-msg"></div>`}
+          <button class="btn" id="auth-submit-btn" onclick="handleAuthSubmit()">${authState.mode==='login' ? 'Masuk' : 'Buat Akun'}</button>
+          ${authState.mode==='signup' ? `<div class="helper" style="text-align:center;margin-top:12px;">Akun baru dimulai dengan role "viewer". Admin pertama harus dipromosikan manual lewat Supabase Table Editor.</div>` : ""}
+        `}
+      </div>
+    </div>
+  `;
+}
+
+async function handleAuthSubmit(){
+  const email = document.getElementById("auth-email").value.trim();
+  const password = document.getElementById("auth-password").value;
+  const btn = document.getElementById("auth-submit-btn");
+  if(!email || !password){ authState.msg = "Isi email dan password."; authState.msgType = "error"; renderAuthScreen(); return; }
+  btn.disabled = true; btn.textContent = "Memproses...";
+
+  if(authState.mode === "signup"){
+    const fullName = document.getElementById("auth-name").value.trim();
+    const { error } = await sb.auth.signUp({ email, password, options:{ data:{ full_name: fullName } } });
+    if(error){ authState.msg = error.message; authState.msgType = "error"; renderAuthScreen(); return; }
+    authState.msg = "Akun dibuat. Kamu bisa langsung masuk.";
+    authState.msgType = "ok"; authState.mode = "login"; renderAuthScreen();
+  } else {
+    const { error } = await sb.auth.signInWithPassword({ email, password });
+    if(error){ authState.msg = error.message; authState.msgType = "error"; renderAuthScreen(); return; }
+    await bootAppAfterLogin();
+  }
+}
+
+async function handleLogout(){
+  await sb.auth.signOut();
+  cache = { athletes:[], tests:[], assessments:[], injuries:[], testCategories:[], bodyParts:[], profile:null };
+  renderAuthScreen();
+}
+
+async function bootAppAfterLogin(){
+  const { data: { user } } = await sb.auth.getUser();
+  if(!user){ renderAuthScreen(); return; }
+  const { data: profile } = await sb.from("profiles").select("*").eq("id", user.id).single();
+  cache.profile = profile;
+  await refreshAll();
+  render();
+}
+
+async function initApp(){
+  if(!sb){ renderAuthScreen(); return; }
+  const { data: { session } } = await sb.auth.getSession();
+  if(session){ await bootAppAfterLogin(); }
+  else { renderAuthScreen(); }
+}
+
+initApp();
+
+if("serviceWorker" in navigator){
+  window.addEventListener("load", () => { navigator.serviceWorker.register("sw.js").catch(()=>{}); });
+}
+</script>
+</body>
+</html>
