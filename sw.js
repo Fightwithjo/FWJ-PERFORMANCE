@@ -1,6 +1,6 @@
 // sw.js — Service Worker untuk Fight With Jo - Performance App
 
-const CACHE_NAME = "fwj-cache-v1";
+const CACHE_NAME = "fwj-cache-v2"; // dinaikkan dari v1 -> v2 karena index.html diupdate
 const OFFLINE_URL = "./index.html";
 
 // File inti yang di-cache saat instalasi (app shell)
@@ -20,7 +20,7 @@ self.addEventListener("install", (event) => {
   );
 });
 
-// Activate: bersihkan cache lama
+// Activate: bersihkan cache lama (v1, dsb)
 self.addEventListener("activate", (event) => {
   event.waitUntil(
     caches.keys().then((keys) =>
