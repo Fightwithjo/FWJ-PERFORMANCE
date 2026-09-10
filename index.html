@@ -263,6 +263,25 @@
     background:#3A1D16;color:#FFD9CC;border-radius:10px;padding:12px;font-size:12px;line-height:1.5;
     max-width:340px;text-align:center;margin-top:16px;
   }
+  .cal-nav{display:flex;align-items:center;justify-content:space-between;margin:6px 0 10px;font-size:13px;}
+  .cal-nav button{background:var(--surface);border:1px solid var(--border);border-radius:8px;width:32px;height:32px;color:var(--text);font-size:16px;cursor:pointer;}
+  .cal-grid{display:grid;grid-template-columns:repeat(7,1fr);gap:3px;}
+  .cal-dow{margin-bottom:4px;}
+  .cal-dow-cell{text-align:center;font-size:10px;color:var(--muted);padding:2px 0;}
+  .cal-cell{aspect-ratio:1;border-radius:8px;background:var(--surface);border:1px solid var(--border);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;cursor:pointer;padding:2px;}
+  .cal-cell.empty{background:none;border:none;cursor:default;}
+  .cal-cell.selected{border-color:var(--turquoise-dark);background:var(--turquoise-tint);}
+  .cal-daynum{font-size:11px;color:var(--text);}
+  .cal-dots{display:flex;gap:2px;flex-wrap:wrap;justify-content:center;max-width:26px;}
+  .cal-dot{width:5px;height:5px;border-radius:50%;}
+  .info-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:10px;}
+  .info-item{background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:8px 10px;}
+  .info-item .k{font-size:10px;color:var(--muted);margin-bottom:2px;}
+  .info-item .v{font-size:13px;font-weight:700;}
+  @media print{
+    nav.bottom, .fab, .modal-overlay, .section-tabs, .btn, .back-row{ display:none !important; }
+    body{ background:#fff; color:#000; }
+  }
 </style>
 </head>
 <body>
@@ -290,9 +309,9 @@ const BUCKET = "athlete-assets";
    loadDB(DB_KEYS.athletes) dsb) tidak perlu diubah satu per satu —
    loadDB() sekarang membaca dari cache in-memory yang diisi lewat
    Supabase, bukan dari localStorage. */
-const DB_KEYS = { athletes:"athletes", tests:"tests", assessments:"assessments", injuries:"injuries" };
+const DB_KEYS = { athletes:"athletes", tests:"tests", assessments:"assessments", injuries:"injuries", readiness:"readiness", loads:"loads", goals:"goals", batteries:"batteries", batterySessions:"batterySessions", rehabLogs:"rehabLogs", asymmetry:"asymmetry", notes:"notes", competitions:"competitions", competitionResults:"competitionResults" };
 
-let cache = { athletes:[], tests:[], assessments:[], injuries:[], testCategories:[], bodyParts:[], profile:null };
+let cache = { athletes:[], tests:[], assessments:[], injuries:[], testCategories:[], bodyParts:[], profile:null, readiness:[], loads:[], goals:[], batteries:[], batterySessions:[], rehabLogs:[], asymmetry:[], notes:[], competitions:[], competitionResults:[] };
 
 function loadDB(key){ return cache[key] || []; }
 function uid(){ return Date.now().toString(36) + Math.random().toString(36).slice(2,7); }
@@ -333,8 +352,10 @@ function mapAthleteRow(a){
 
 const SEVERITY_DB_TO_UI = { minor:"Ringan", moderate:"Sedang", severe:"Berat" };
 const SEVERITY_UI_TO_DB = { Ringan:"minor", Sedang:"moderate", Berat:"severe" };
-const INJSTATUS_DB_TO_UI = { active:"Aktif", recovering:"Recovering", cleared:"Sembuh", chronic:"Kronis" };
-const INJSTATUS_UI_TO_DB = { Aktif:"active", Recovering:"recovering", Sembuh:"cleared", Kronis:"chronic" };
+const INJSTATUS_DB_TO_UI = { active:"Aktif", recovering:"Recovering", rehab:"Rehab", return_to_training:"Return to Training", return_to_play:"Return to Play", cleared:"Sembuh", chronic:"Kronis", closed:"Closed" };
+const INJSTATUS_UI_TO_DB = { Aktif:"active", Recovering:"recovering", Rehab:"rehab", "Return to Training":"return_to_training", "Return to Play":"return_to_play", Sembuh:"cleared", Kronis:"chronic", Closed:"closed" };
+const CLEARANCE_DB_TO_UI = { pending:"Pending", not_cleared:"Not Cleared", cleared:"Cleared" };
+const CLEARANCE_UI_TO_DB = { Pending:"pending", "Not Cleared":"not_cleared", Cleared:"cleared" };
 
 function mapInjuryRow(i){
   const bp = i.body_parts || {};
@@ -344,7 +365,92 @@ function mapInjuryRow(i){
     severity: SEVERITY_DB_TO_UI[i.severity] || i.severity,
     status: INJSTATUS_DB_TO_UI[i.status] || i.status,
     date: new Date(i.injury_date).getTime(),
-    notes: i.notes || ""
+    notes: i.notes || "",
+    diagnosis: i.diagnosis || "",
+    mechanism: i.mechanism || "",
+    estimatedRecovery: i.estimated_recovery_date ? new Date(i.estimated_recovery_date).getTime() : null,
+    medicalNotes: i.medical_notes || "",
+    clearanceStatus: CLEARANCE_DB_TO_UI[i.clearance_status] || "Pending"
+  };
+}
+
+/* ---------------- READINESS / TRAINING LOAD / GOALS — mapping ---------------- */
+function mapReadinessRow(r){
+  return {
+    id: r.id, athleteId: r.athlete_id, date: new Date(r.log_date).getTime(),
+    sleepDuration: r.sleep_duration!=null ? Number(r.sleep_duration) : null,
+    sleepQuality: r.sleep_quality, fatigue: r.fatigue, soreness: r.soreness,
+    stress: r.stress, mood: r.mood, energy: r.energy, motivation: r.motivation,
+    score: r.readiness_score!=null ? Number(r.readiness_score) : null,
+    notes: r.notes || ""
+  };
+}
+function mapTrainingLoadRow(t){
+  return {
+    id: t.id, athleteId: t.athlete_id, date: new Date(t.session_date).getTime(),
+    sessionType: t.session_type, duration: Number(t.duration_minutes)||0,
+    rpe: Number(t.session_rpe)||0, load: Number(t.session_load)||(Number(t.duration_minutes)||0)*(Number(t.session_rpe)||0),
+    notes: t.notes || ""
+  };
+}
+const GOAL_STATUS_DB_TO_UI = { not_started:"Not Started", in_progress:"In Progress", on_track:"On Track", at_risk:"At Risk", completed:"Completed" };
+const GOAL_STATUS_UI_TO_DB = { "Not Started":"not_started", "In Progress":"in_progress", "On Track":"on_track", "At Risk":"at_risk", "Completed":"completed" };
+function mapGoalRow(g){
+  return {
+    id: g.id, athleteId: g.athlete_id, name: g.goal_name, category: g.category || "General",
+    baseline: g.baseline!=null ? Number(g.baseline) : null,
+    target: g.target!=null ? Number(g.target) : null,
+    current: g.current_value!=null ? Number(g.current_value) : null,
+    unit: g.unit || "", deadline: g.deadline ? new Date(g.deadline).getTime() : null,
+    priority: g.priority || "Medium", status: GOAL_STATUS_DB_TO_UI[g.status] || g.status || "Not Started",
+    direction: g.higher_is_better===false ? "lower" : "higher", notes: g.notes || ""
+  };
+}
+function mapBatteryRow(b){
+  const items = (b.test_battery_items||[]).slice().sort((x,y)=>(x.sort_order||0)-(y.sort_order||0));
+  return { id: b.id, name: b.name, category: b.category || "General", notes: b.notes || "", testIds: items.map(i=>i.test_id) };
+}
+function mapBatterySessionRow(s){
+  return {
+    id: s.id, athleteId: s.athlete_id, batteryId: s.battery_id,
+    date: new Date(s.session_date).getTime(), notes: s.coach_notes || "", status: s.status || "completed"
+  };
+}
+function mapRehabLogRow(r){
+  return {
+    id: r.id, injuryId: r.injury_id, athleteId: r.athlete_id, date: new Date(r.log_date).getTime(),
+    phase: r.phase, exercises: r.exercises || "", progressNotes: r.progress_notes || "",
+    painLevel: r.pain_level
+  };
+}
+function mapAsymmetryRow(r){
+  const left = Number(r.left_value), right = Number(r.right_value);
+  const pct = Math.max(left,right)>0 ? (Math.abs(left-right) / Math.max(left,right)) * 100 : 0;
+  return {
+    id: r.id, athleteId: r.athlete_id, testName: r.test_name, unit: r.unit || "",
+    left, right, diff: Math.abs(left-right), asymmetryPct: Math.round(pct*10)/10,
+    date: new Date(r.checked_date).getTime(), notes: r.notes || ""
+  };
+}
+const NOTE_CATEGORIES = ["Performance","Training","Behavior","Recovery","Injury","Competition","General"];
+function mapNoteRow(n){
+  return {
+    id: n.id, athleteId: n.athlete_id, date: new Date(n.note_date).getTime(),
+    category: n.category || "General", note: n.note || "", priority: n.priority || "Medium",
+    followUp: n.follow_up_date ? new Date(n.follow_up_date).getTime() : null
+  };
+}
+function mapCompetitionRow(c){
+  return {
+    id: c.id, name: c.name, date: new Date(c.competition_date).getTime(),
+    venue: c.venue || "", opponent: c.opponent || "", type: c.competition_type || "",
+    result: c.result || ""
+  };
+}
+function mapCompetitionResultRow(r){
+  return {
+    id: r.id, competitionId: r.competition_id, athleteId: r.athlete_id,
+    minutesPlayed: r.minutes_played, notes: r.performance_notes || ""
   };
 }
 
@@ -374,7 +480,7 @@ async function refreshAthletes(){
 
 async function refreshAssessments(){
   const { data, error } = await sb.from("performance_results")
-    .select("id, value, unit, athlete_id, test_id, assessments(assessment_date)")
+    .select("id, value, unit, athlete_id, test_id, assessments(assessment_date, battery_session_id)")
     .order("created_at", {ascending:false});
   if(error){ showToast("Gagal memuat riwayat tes"); return; }
   cache.assessments = (data||[]).map(r => {
@@ -383,6 +489,7 @@ async function refreshAssessments(){
     return {
       id: r.id, athleteId: r.athlete_id, testId: r.test_id,
       date: r.assessments ? new Date(r.assessments.assessment_date).getTime() : Date.now(),
+      batterySessionId: r.assessments ? r.assessments.battery_session_id : null,
       rawScore: Number(r.value), category
     };
   });
@@ -396,12 +503,73 @@ async function refreshInjuries(){
   cache.injuries = (data||[]).map(mapInjuryRow);
 }
 
+async function refreshReadiness(){
+  const { data, error } = await sb.from("readiness_logs").select("*").order("log_date",{ascending:false});
+  if(error){ showToast("Gagal memuat data readiness"); return; }
+  cache.readiness = (data||[]).map(mapReadinessRow);
+}
+async function refreshTrainingLoad(){
+  const { data, error } = await sb.from("training_sessions").select("*").order("session_date",{ascending:false});
+  if(error){ showToast("Gagal memuat data training load"); return; }
+  cache.loads = (data||[]).map(mapTrainingLoadRow);
+}
+async function refreshGoals(){
+  const { data, error } = await sb.from("athlete_goals").select("*").order("created_at",{ascending:false});
+  if(error){ showToast("Gagal memuat data goals"); return; }
+  cache.goals = (data||[]).map(mapGoalRow);
+}
+async function refreshBatteries(){
+  const { data, error } = await sb.from("test_batteries").select("*, test_battery_items(test_id, sort_order)").order("created_at",{ascending:false});
+  if(error){ showToast("Gagal memuat test battery"); return; }
+  cache.batteries = (data||[]).map(mapBatteryRow);
+}
+async function refreshBatterySessions(){
+  const { data, error } = await sb.from("battery_sessions").select("*").order("session_date",{ascending:false});
+  if(error){ showToast("Gagal memuat sesi battery"); return; }
+  cache.batterySessions = (data||[]).map(mapBatterySessionRow);
+}
+async function refreshRehabLogs(){
+  const { data, error } = await sb.from("rehab_logs").select("*").order("log_date",{ascending:false});
+  if(error){ showToast("Gagal memuat data rehab"); return; }
+  cache.rehabLogs = (data||[]).map(mapRehabLogRow);
+}
+async function refreshAsymmetry(){
+  const { data, error } = await sb.from("asymmetry_checks").select("*").order("checked_date",{ascending:false});
+  if(error){ showToast("Gagal memuat data asymmetry"); return; }
+  cache.asymmetry = (data||[]).map(mapAsymmetryRow);
+}
+async function refreshNotes(){
+  const { data, error } = await sb.from("athlete_notes").select("*").order("note_date",{ascending:false});
+  if(error){ showToast("Gagal memuat coach notes"); return; }
+  cache.notes = (data||[]).map(mapNoteRow);
+}
+async function refreshCompetitions(){
+  const { data, error } = await sb.from("competitions").select("*").order("competition_date",{ascending:false});
+  if(error){ showToast("Gagal memuat data kompetisi"); return; }
+  cache.competitions = (data||[]).map(mapCompetitionRow);
+}
+async function refreshCompetitionResults(){
+  const { data, error } = await sb.from("competition_results").select("*");
+  if(error){ showToast("Gagal memuat hasil kompetisi"); return; }
+  cache.competitionResults = (data||[]).map(mapCompetitionResultRow);
+}
+
 async function refreshAll(){
   await refreshReferenceData();
   await refreshTests();
   await refreshAthletes();
   await refreshAssessments();
   await refreshInjuries();
+  await refreshReadiness();
+  await refreshTrainingLoad();
+  await refreshGoals();
+  await refreshBatteries();
+  await refreshBatterySessions();
+  await refreshRehabLogs();
+  await refreshAsymmetry();
+  await refreshNotes();
+  await refreshCompetitions();
+  await refreshCompetitionResults();
 }
 
 /* ---------------- upload foto ke Supabase Storage ---------------- */
@@ -445,6 +613,164 @@ function computeImprovement(test, before, after){
   const pct = before !== 0 ? (diff / Math.abs(before)) * 100 : 0;
   return { diff, pct };
 }
+
+/* ==========================================================
+   Readiness / Training Load / Goals — perhitungan
+========================================================== */
+// input 1-5. sleepQuality,energy,mood,motivation: semakin tinggi semakin baik.
+// fatigue,soreness,stress: semakin tinggi semakin buruk (dibalik dulu).
+function computeReadinessScore(v){
+  const inv = x => (x==null ? 3 : (6 - Number(x))); // balik skala 1-5
+  const parts = [
+    Number(v.sleepQuality)||3, inv(v.fatigue), inv(v.soreness), inv(v.stress),
+    Number(v.mood)||3, Number(v.energy)||3, Number(v.motivation)||3
+  ];
+  const sum = parts.reduce((a,b)=>a+b,0); // max 35, min 7
+  const score = ((sum - 7) / (35 - 7)) * 100;
+  return Math.round(Math.max(0, Math.min(100, score)));
+}
+function readinessCategory(score){
+  if(score>=90) return {label:"Excellent", color:"#1D9E75"};
+  if(score>=75) return {label:"Good", color:"#378ADD"};
+  if(score>=60) return {label:"Moderate", color:"#EF9F27"};
+  if(score>=40) return {label:"Low", color:"#E2841F"};
+  return {label:"Poor", color:"#E24B4A"};
+}
+function sumLoadInRange(loads, fromMs, toMs){
+  return loads.filter(l=>l.date>=fromMs && l.date<=toMs).reduce((s,l)=>s+l.load,0);
+}
+// Acute:Chronic Workload Ratio — acute = rata-rata beban 7 hari terakhir,
+// chronic = rata-rata beban mingguan 28 hari terakhir.
+function computeACWR(loads, refDate){
+  const day = 86400000;
+  const acuteFrom = refDate - 6*day;
+  const chronicFrom = refDate - 27*day;
+  const acuteLoad = sumLoadInRange(loads, acuteFrom, refDate);
+  const chronicLoadTotal = sumLoadInRange(loads, chronicFrom, refDate);
+  const chronicWeeklyAvg = chronicLoadTotal / 4;
+  const ratio = chronicWeeklyAvg > 0 ? (acuteLoad / chronicWeeklyAvg) : null;
+  return { acuteLoad, chronicWeeklyAvg, ratio };
+}
+function acwrZone(ratio){
+  if(ratio==null) return {label:"Data belum cukup", color:"#5B6664"};
+  if(ratio < 0.8) return {label:"Beban rendah", color:"#378ADD"};
+  if(ratio <= 1.3) return {label:"Zona aman", color:"#1D9E75"};
+  if(ratio <= 1.5) return {label:"Risiko meningkat", color:"#EF9F27"};
+  return {label:"Risiko tinggi — lonjakan beban", color:"#E24B4A"};
+}
+function goalProgressPct(g){
+  if(g.baseline==null || g.target==null || g.current==null) return null;
+  const total = g.direction==="lower" ? (g.baseline - g.target) : (g.target - g.baseline);
+  if(total===0) return 100;
+  const done = g.direction==="lower" ? (g.baseline - g.current) : (g.current - g.baseline);
+  return Math.round(Math.max(0, Math.min(100, (done/total)*100)));
+}
+function goalStatusColor(s){
+  return {"Not Started":"#5B6664","In Progress":"#378ADD","On Track":"#1D9E75","At Risk":"#E24B4A","Completed":"#1D9E75"}[s] || "#5B6664";
+}
+// Asymmetry: threshold configurable, default 10%. Ini indikator, BUKAN diagnosis medis.
+function asymmetryZone(pct, threshold){
+  const t = threshold || 10;
+  if(pct <= t) return {label:"Dalam batas normal", color:"#1D9E75"};
+  if(pct <= t*1.5) return {label:"Perlu dipantau", color:"#EF9F27"};
+  return {label:"Asimetri signifikan — pertimbangkan evaluasi lebih lanjut", color:"#E24B4A"};
+}
+
+/* ==========================================================
+   Performance Profile & Athlete Comparison — perhitungan
+========================================================== */
+const CATEGORY_NUMERIC = { Poor:25, Average:50, Good:75, Elite:100 };
+const PROFILE_BUCKETS = ["Speed","Strength","Power","Endurance","Agility","Mobility","Conditioning"];
+function bucketForTest(t){
+  const s = ((t.iconKey||"") + " " + (t.name||"")).toLowerCase();
+  if(/sprint|speed|kecepatan|\b\d+m\b/.test(s)) return "Speed";
+  if(/squat|deadlift|bench|1rm|strength|kekuatan|press/.test(s)) return "Strength";
+  if(/jump|power|explos|daya ledak|broad|vertical/.test(s)) return "Power";
+  if(/endurance|yoyo|yo-yo|beep|vo2|daya tahan|cooper|1\.5\s*km|distance run/.test(s)) return "Endurance";
+  if(/agility|lincah|shuttle|t-test|zigzag|illinois/.test(s)) return "Agility";
+  if(/mobility|flexib|fleksibilitas|stretch|\brom\b|sit and reach/.test(s)) return "Mobility";
+  if(/condition|kondisi|circuit/.test(s)) return "Conditioning";
+  return null;
+}
+// latestAssessmentsForAthlete: peta testId -> assessment terbaru & sebelumnya
+function athleteTestHistory(athleteId, testId){
+  return loadDB(DB_KEYS.assessments).filter(x=>x.athleteId===athleteId && x.testId===testId).sort((a,b)=>b.date-a.date);
+}
+function buildPerformanceProfile(athleteId){
+  const tests = loadDB(DB_KEYS.tests);
+  const current = {}, previous = {};
+  PROFILE_BUCKETS.forEach(b=>{ current[b] = []; previous[b] = []; });
+  tests.forEach(t=>{
+    const bucket = bucketForTest(t); if(!bucket) return;
+    const rows = athleteTestHistory(athleteId, t.id);
+    if(rows.length===0) return;
+    current[bucket].push(CATEGORY_NUMERIC[rows[0].category] ?? 50);
+    if(rows.length>=2) previous[bucket].push(CATEGORY_NUMERIC[rows[1].category] ?? 50);
+  });
+  const avg = arr => arr.length ? Math.round(arr.reduce((a,b)=>a+b,0)/arr.length) : null;
+  return {
+    labels: PROFILE_BUCKETS,
+    current: PROFILE_BUCKETS.map(b=>avg(current[b])),
+    previous: PROFILE_BUCKETS.map(b=>avg(previous[b]))
+  };
+}
+// skor performa keseluruhan atlet (rata-rata kategori numerik dari hasil tes terbaru per tes)
+function athletePerformanceScore(athleteId){
+  const tests = loadDB(DB_KEYS.tests);
+  const vals = [];
+  tests.forEach(t=>{
+    const rows = athleteTestHistory(athleteId, t.id);
+    if(rows.length) vals.push(CATEGORY_NUMERIC[rows[0].category] ?? 50);
+  });
+  return vals.length ? Math.round(vals.reduce((a,b)=>a+b,0)/vals.length) : null;
+}
+
+/* ==========================================================
+   Alert & Notification (rule-based, dihitung langsung dari data —
+   bukan machine learning)
+========================================================== */
+function computeAlerts(){
+  const athletes = loadDB(DB_KEYS.athletes);
+  const readiness = loadDB(DB_KEYS.readiness);
+  const loads = loadDB(DB_KEYS.loads);
+  const injuries = loadDB(DB_KEYS.injuries);
+  const goals = loadDB(DB_KEYS.goals);
+  const alerts = [];
+  const now = Date.now();
+  athletes.forEach(a=>{
+    const rRows = readiness.filter(r=>r.athleteId===a.id).sort((x,y)=>y.date-x.date);
+    if(rRows.length && rRows[0].date >= now - 3*86400000){
+      if(rRows[0].score < 40) alerts.push({severity:"critical", athlete:a.name, message:`Readiness rendah (${rRows[0].score})`});
+      else if(rRows[0].score < 60) alerts.push({severity:"warning", athlete:a.name, message:`Readiness menurun (${rRows[0].score})`});
+    }
+    const lRows = loads.filter(l=>l.athleteId===a.id);
+    if(lRows.length){
+      const { ratio } = computeACWR(lRows, now);
+      if(ratio!=null && ratio > 1.5) alerts.push({severity:"critical", athlete:a.name, message:`Lonjakan beban latihan — ACWR ${ratio.toFixed(2)} (possible overtraining risk)`});
+      else if(ratio!=null && ratio > 1.3) alerts.push({severity:"warning", athlete:a.name, message:`Beban latihan sangat tinggi — ACWR ${ratio.toFixed(2)}`});
+    }
+    const activeInj = injuries.filter(i=>i.athleteId===a.id && (i.status==="Aktif"||i.status==="Recovering"));
+    activeInj.forEach(i=>alerts.push({severity: i.status==="Aktif"?"warning":"info", athlete:a.name, message:`Cedera ${i.bodyPartLabel||""} status "${i.status}" belum selesai`}));
+
+    const newInjuries = injuries.filter(i=>i.athleteId===a.id && i.date >= now - 2*86400000);
+    newInjuries.forEach(i=>alerts.push({severity:"info", athlete:a.name, message:`Cedera baru dicatat: ${i.bodyPartLabel||""} · ${i.injuryType}`}));
+
+    const rehabOverdue = injuries.filter(i=>i.athleteId===a.id &&
+      ["Rehab","Recovering","Return to Training"].includes(i.status) &&
+      i.estimatedRecovery && i.estimatedRecovery < now);
+    rehabOverdue.forEach(i=>alerts.push({severity:"warning", athlete:a.name, message:`Rehab overdue — melewati estimasi pemulihan ${i.bodyPartLabel||""}`}));
+
+    const rtpReview = injuries.filter(i=>i.athleteId===a.id && i.status==="Return to Training");
+    rtpReview.forEach(i=>alerts.push({severity:"info", athlete:a.name, message:`Perlu review Return to Play — ${i.bodyPartLabel||""}`}));
+
+    const atRiskGoals = goals.filter(g=>g.athleteId===a.id && g.status==="At Risk");
+    atRiskGoals.forEach(g=>alerts.push({severity:"warning", athlete:a.name, message:`Goal "${g.name}" berstatus At Risk`}));
+  });
+  const order = {critical:0, warning:1, info:2};
+  return alerts.sort((x,y)=>order[x.severity]-order[y.severity]);
+}
+function alertColor(sev){ return {critical:"#E24B4A", warning:"#EF9F27", info:"#378ADD"}[sev] || "#5B6664"; }
+function alertLabel(sev){ return {critical:"Critical", warning:"Warning", info:"Info"}[sev] || sev; }
 
 /* ==========================================================
    Body map — koordinat hotspot (skema sederhana, non-realistis)
@@ -508,7 +834,13 @@ let state = {
   bodyView:"front", selectedPart:null,
   photoTarget:null, pendingPhoto:null,
   filters:{ part:"", severity:"", status:"" },
-  mpId:null, mpSection:"overview"
+  mpId:null, mpSection:"overview",
+  testsSection:"categories",
+  compareIds:[], compareFilters:{ sport:"", position:"", gender:"", status:"" },
+  calendarMonth: new Date(new Date().getFullYear(), new Date().getMonth(), 1).getTime(),
+  calendarSelectedDay: null,
+  calendarFilters:{ athleteId:"", type:"" },
+  competitionId:null
 };
 let chartInstances = {};
 function destroyChart(id){ if(chartInstances[id]){ chartInstances[id].destroy(); delete chartInstances[id]; } }
@@ -530,11 +862,15 @@ function render(){
       <button class="backup-btn" onclick="openModal('backup')">⬇</button>
     </header>
     <main id="main"></main>
-    ${state.tab === "tests" ? `<button class="fab" onclick="openModal('addTest')">+</button>` : ""}
+    ${state.tab === "tests" && state.testsSection==='categories' ? `<button class="fab" onclick="openModal('addTest')">+</button>` : ""}
+    ${state.tab === "tests" && state.testsSection==='battery' ? `<button class="fab" onclick="openModal('createBattery')">+</button>` : ""}
     ${state.tab === "masterplan" && !state.mpId ? `<button class="fab" onclick="openModal('addMasterplan')">+</button>` : ""}
     <nav class="bottom">
       ${navBtn("dashboard","📊","Dashboard")}
       ${navBtn("athletes","👤","Atlet")}
+      ${navBtn("compare","⚖️","Bandingkan")}
+      ${navBtn("calendar","📅","Kalender")}
+      ${navBtn("competitions","🏆","Kompetisi")}
       ${navBtn("masterplan","🗓️","Master Plan")}
       ${navBtn("tests","📋","Kategori Tes")}
       ${navBtn("history","🕒","Riwayat")}
@@ -561,15 +897,73 @@ function renderMain(){
   if(state.tab === "athletes") main.innerHTML = state.athleteId ? viewAthleteDetail() : viewAthleteList();
   if(state.tab === "history") main.innerHTML = viewHistory();
   if(state.tab === "masterplan") main.innerHTML = state.mpId ? viewMasterplanDetail() : viewMasterplanList();
+  if(state.tab === "compare") main.innerHTML = viewComparison();
+  if(state.tab === "calendar") main.innerHTML = viewCalendar();
+  if(state.tab === "competitions") main.innerHTML = state.competitionId ? viewCompetitionDetail() : viewCompetitionList();
 
   if(state.tab === "dashboard") drawDashboardChart();
+  if(state.tab === "compare") drawComparisonChart();
   if(state.tab === "athletes" && state.athleteId){
     if(state.athleteSection === "performance") drawProfileChart();
     if(state.athleteSection === "improvement") drawImprovementChart();
+    if(state.athleteSection === "readiness") drawReadinessChart();
+    if(state.athleteSection === "load") drawLoadChart();
+    if(state.athleteSection === "profile") drawPerformanceRadarChart();
   }
 }
 
 /* ---------------- DASHBOARD ---------------- */
+function computeTeamStats(){
+  const athletes = loadDB(DB_KEYS.athletes);
+  const readiness = loadDB(DB_KEYS.readiness);
+  const loads = loadDB(DB_KEYS.loads);
+  const goals = loadDB(DB_KEYS.goals);
+  const now = Date.now();
+
+  const available = athletes.filter(a=>a.status==="Aktif").length;
+  const injuredCount = athletes.filter(a=>a.status==="Cedera").length;
+  const rehabAthleteIds = new Set(loadDB(DB_KEYS.injuries).filter(i=>["Rehab","Recovering","Return to Training"].includes(i.status)).map(i=>i.athleteId));
+
+  const readinessVals = athletes.map(a=>{
+    const rows = readiness.filter(r=>r.athleteId===a.id).sort((x,y)=>y.date-x.date);
+    return rows.length && rows[0].date >= now - 7*86400000 ? rows[0].score : null;
+  }).filter(v=>v!=null);
+  const avgReadiness = readinessVals.length ? Math.round(readinessVals.reduce((a,b)=>a+b,0)/readinessVals.length) : null;
+
+  const loadVals = athletes.map(a=>{
+    const rows = loads.filter(l=>l.athleteId===a.id);
+    return rows.length ? sumLoadInRange(rows, now-7*86400000, now) : null;
+  }).filter(v=>v!=null && v>0);
+  const avgLoad = loadVals.length ? Math.round(loadVals.reduce((a,b)=>a+b,0)/loadVals.length) : null;
+
+  const perfVals = athletes.map(a=>athletePerformanceScore(a.id)).filter(v=>v!=null);
+  const avgPerformance = perfVals.length ? Math.round(perfVals.reduce((a,b)=>a+b,0)/perfVals.length) : null;
+
+  const testedAthletes = new Set(loadDB(DB_KEYS.assessments).map(a=>a.athleteId));
+  const testingCompletion = athletes.length ? Math.round((testedAthletes.size / athletes.length) * 100) : 0;
+
+  const goalProgresses = goals.map(g=>goalProgressPct(g)).filter(v=>v!=null);
+  const avgGoalsProgress = goalProgresses.length ? Math.round(goalProgresses.reduce((a,b)=>a+b,0)/goalProgresses.length) : null;
+
+  return { available, injuredCount, rehabCount: rehabAthleteIds.size, avgReadiness, avgLoad, avgPerformance, testingCompletion, avgGoalsProgress };
+}
+function csvEscape(v){ const s = (v==null?"":String(v)); return /[",\n]/.test(s) ? `"${s.replace(/"/g,'""')}"` : s; }
+function downloadCSV(rows, filename){
+  const csv = rows.map(r=>r.map(csvEscape).join(",")).join("\r\n");
+  const blob = new Blob([csv], {type:"text/csv;charset=utf-8;"});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a"); a.href = url; a.download = filename;
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+function exportTeamRosterCSV(){
+  const athletes = loadDB(DB_KEYS.athletes);
+  const rows = [["Kode","Nama","Sport","Posisi","Gender","Usia","Status","Performance Score"]];
+  athletes.forEach(a=>rows.push([a.code,a.name,a.sport,a.position,a.gender,a.age,a.status,athletePerformanceScore(a.id)??""]));
+  downloadCSV(rows, "team_roster.csv");
+}
+function printCurrentView(){ window.print(); }
+
 function viewDashboard(){
   const athletes = loadDB(DB_KEYS.athletes);
   const tests = loadDB(DB_KEYS.tests);
@@ -579,6 +973,8 @@ function viewDashboard(){
   const weekAgo = Date.now() - 7*86400000;
   const weekCount = assessments.filter(a => a.date >= weekAgo).length;
   const activeInjuries = injuries.filter(i => i.status === "Aktif").length;
+  const alerts = computeAlerts();
+  const team = computeTeamStats();
 
   return `
     <h2 class="page-title">Ringkasan</h2>
@@ -588,6 +984,34 @@ function viewDashboard(){
       <div class="stat-card"><div class="label">TES MINGGU INI</div><div class="value">${weekCount}</div></div>
       <div class="stat-card"><div class="label">CEDERA AKTIF</div><div class="value" style="color:var(--poor)">${activeInjuries}</div></div>
     </div>
+
+    <h2 class="page-title">Team Dashboard</h2>
+    <div class="stat-grid">
+      <div class="stat-card"><div class="label">TERSEDIA</div><div class="value">${team.available}</div></div>
+      <div class="stat-card"><div class="label">CEDERA</div><div class="value">${team.injuredCount}</div></div>
+      <div class="stat-card"><div class="label">DALAM REHAB</div><div class="value">${team.rehabCount}</div></div>
+      <div class="stat-card"><div class="label">TESTING COMPLETION</div><div class="value">${team.testingCompletion}%</div></div>
+      <div class="stat-card"><div class="label">RATA-RATA READINESS</div><div class="value">${team.avgReadiness ?? '-'}</div></div>
+      <div class="stat-card"><div class="label">RATA-RATA LOAD (7 HARI)</div><div class="value">${team.avgLoad ?? '-'}</div></div>
+      <div class="stat-card"><div class="label">RATA-RATA PERFORMANCE</div><div class="value">${team.avgPerformance ?? '-'}</div></div>
+      <div class="stat-card"><div class="label">RATA-RATA GOALS PROGRESS</div><div class="value">${team.avgGoalsProgress!=null?team.avgGoalsProgress+'%':'-'}</div></div>
+    </div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:16px;">
+      <button class="btn" style="flex:1;" onclick="exportTeamRosterCSV()">Export Roster (CSV)</button>
+      <button class="btn" style="flex:1;" onclick="printCurrentView()">Cetak / Export PDF</button>
+    </div>
+
+    <h2 class="page-title">Notifikasi</h2>
+    ${alerts.length===0 ? `<div class="chart-empty">Tidak ada notifikasi saat ini.</div>` : `
+      <div class="card-list" style="margin-bottom:20px;">
+        ${alerts.slice(0,20).map(al=>`
+          <div class="history-row">
+            <div class="h-left"><b>${al.athlete}</b><span>${al.message}</span></div>
+            <span class="badge" style="background:${alertColor(al.severity)}">${alertLabel(al.severity)}</span>
+          </div>
+        `).join("")}
+      </div>
+    `}
 
     <h2 class="page-title">Performance Overview</h2>
     ${tests.length === 0 ? `<div class="chart-empty">Belum ada kategori tes.</div>` : tests.map(t => testCategoryCard(t, assessments)).join("")}
@@ -647,12 +1071,304 @@ function drawDashboardChart(){
   });
 }
 
-/* ---------------- KATEGORI TES ---------------- */
+/* ---------------- ATHLETE COMPARISON ---------------- */
+function toggleCompare(id){
+  const i = state.compareIds.indexOf(id);
+  if(i>=0) state.compareIds.splice(i,1); else state.compareIds.push(id);
+  render();
+}
+function viewComparison(){
+  const athletes = loadDB(DB_KEYS.athletes);
+  const f = state.compareFilters;
+  const filtered = athletes.filter(a =>
+    (!f.sport || a.sport===f.sport) && (!f.position || a.position===f.position) &&
+    (!f.gender || a.gender===f.gender) && (!f.status || a.status===f.status)
+  );
+  const sports = [...new Set(athletes.map(a=>a.sport))].filter(Boolean);
+  const positions = [...new Set(athletes.map(a=>a.position))].filter(Boolean);
+  const selected = state.compareIds.map(id=>athletes.find(a=>a.id===id)).filter(Boolean);
+
+  const rows = selected.map(a=>({ a, score: athletePerformanceScore(a.id) }))
+    .sort((x,y)=>(y.score??-1)-(x.score??-1));
+
+  return `
+    <h2 class="page-title">Bandingkan Atlet</h2>
+    <div class="filter-row">
+      <select onchange="state.compareFilters.sport=this.value; render();">
+        <option value="">Semua sport</option>
+        ${sports.map(s=>`<option value="${s}" ${f.sport===s?"selected":""}>${s}</option>`).join("")}
+      </select>
+      <select onchange="state.compareFilters.position=this.value; render();">
+        <option value="">Semua posisi</option>
+        ${positions.map(p=>`<option value="${p}" ${f.position===p?"selected":""}>${p}</option>`).join("")}
+      </select>
+      <select onchange="state.compareFilters.gender=this.value; render();">
+        <option value="">Semua gender</option>
+        <option value="L" ${f.gender==='L'?'selected':''}>Laki-laki</option>
+        <option value="P" ${f.gender==='P'?'selected':''}>Perempuan</option>
+      </select>
+      <select onchange="state.compareFilters.status=this.value; render();">
+        <option value="">Semua status</option>
+        <option ${f.status==='Aktif'?'selected':''}>Aktif</option>
+        <option ${f.status==='Cedera'?'selected':''}>Cedera</option>
+        <option ${f.status==='Istirahat'?'selected':''}>Istirahat</option>
+      </select>
+    </div>
+    <div class="card-list" style="margin-bottom:14px;">
+      ${filtered.length===0 ? `<div class="chart-empty">Tidak ada atlet yang cocok dengan filter.</div>` : filtered.map(a=>`
+        <div class="history-row" style="cursor:pointer;" onclick="toggleCompare('${a.id}')">
+          <div class="h-left"><b>${state.compareIds.includes(a.id)?'☑':'☐'} ${a.name}</b><span>${a.sport} · ${a.position}</span></div>
+        </div>
+      `).join("")}
+    </div>
+    ${selected.length===0 ? `<div class="chart-empty">Pilih minimal 1 atlet di atas untuk membandingkan.</div>` : `
+      <div class="chart-card">
+        <h3>Performance Score</h3>
+        <canvas id="chart-compare" height="200"></canvas>
+      </div>
+      <h2 class="page-title">Ranking</h2>
+      ${rows.map((r,i)=>`
+        <div class="history-row">
+          <div class="h-left"><b>#${i+1} ${r.a.name}</b><span>${r.a.sport} · ${r.a.position}</span></div>
+          <span class="badge" style="background:${r.score!=null?catColor(r.score>=90?'Elite':r.score>=75?'Good':r.score>=50?'Average':'Poor'):'#5B6664'}">${r.score!=null?r.score:'No Data'}</span>
+        </div>
+      `).join("")}
+    `}
+  `;
+}
+function drawComparisonChart(){
+  destroyChart("chart-compare");
+  const canvas = document.getElementById("chart-compare"); if(!canvas) return;
+  const athletes = loadDB(DB_KEYS.athletes);
+  const selected = state.compareIds.map(id=>athletes.find(a=>a.id===id)).filter(Boolean);
+  if(selected.length===0) return;
+  const labels = selected.map(a=>a.name);
+  const data = selected.map(a=>athletePerformanceScore(a.id) ?? 0);
+  chartInstances["chart-compare"] = new Chart(canvas, {
+    type:"bar",
+    data:{ labels, datasets:[{ label:"Performance Score", data, backgroundColor:"#20B2AA", borderRadius:6 }] },
+    options:{ responsive:true, plugins:{legend:{display:false}}, scales:{ y:{min:0,max:100,ticks:{font:{size:10}}}, x:{ticks:{font:{size:10}}} } }
+  });
+}
+
+/* ---------------- KOMPETISI ---------------- */
+function setCompetition(id){ state.competitionId = id; render(); }
+function backToCompetitionList(){ state.competitionId = null; render(); }
+function viewCompetitionList(){
+  const comps = loadDB(DB_KEYS.competitions).sort((a,b)=>b.date-a.date);
+  return `
+    <h2 class="page-title">Kompetisi</h2>
+    <button class="btn" onclick="openModal('addCompetition')">+ Tambah Kompetisi</button>
+    ${comps.length===0 ? `<div class="chart-empty" style="margin-top:14px;">Belum ada data kompetisi.</div>` : `
+      <div class="card-list" style="margin-top:14px;">
+        ${comps.map(c=>`
+          <div class="history-row" style="cursor:pointer;" onclick="setCompetition('${c.id}')">
+            <div class="h-left"><b>${c.name}</b><span>${new Date(c.date).toLocaleDateString("id-ID",{day:"2-digit",month:"short",year:"numeric"})} · vs ${c.opponent||'-'} · ${c.venue||'-'}</span></div>
+            <span class="badge" style="background:#378ADD">${c.result || c.type || '-'}</span>
+          </div>
+        `).join("")}
+      </div>
+    `}
+  `;
+}
+function viewCompetitionDetail(){
+  const c = loadDB(DB_KEYS.competitions).find(x=>x.id===state.competitionId);
+  if(!c){ state.competitionId=null; return viewCompetitionList(); }
+  const athletes = loadDB(DB_KEYS.athletes);
+  const results = loadDB(DB_KEYS.competitionResults).filter(r=>r.competitionId===c.id);
+  return `
+    <div class="back-row" onclick="backToCompetitionList()"><span class="arrow">‹</span><span class="label">Semua kompetisi</span></div>
+    <h2 class="page-title">${c.name}</h2>
+    <div class="info-grid">
+      <div class="info-item"><div class="k">Tanggal</div><div class="v">${new Date(c.date).toLocaleDateString("id-ID",{day:"2-digit",month:"short",year:"numeric"})}</div></div>
+      <div class="info-item"><div class="k">Venue</div><div class="v">${c.venue||'-'}</div></div>
+      <div class="info-item"><div class="k">Lawan</div><div class="v">${c.opponent||'-'}</div></div>
+      <div class="info-item"><div class="k">Tipe</div><div class="v">${c.type||'-'}</div></div>
+    </div>
+    ${c.result ? `<p class="helper" style="margin:10px 0 0;"><b>Hasil:</b> ${c.result}</p>` : ""}
+
+    <h2 class="page-title" style="margin-top:16px;">Partisipasi Atlet</h2>
+    <button class="btn" onclick="openModal('addParticipant','${c.id}')">+ Tambah Partisipasi Atlet</button>
+    ${results.length===0 ? `<div class="chart-empty" style="margin-top:10px;">Belum ada atlet yang dicatat untuk kompetisi ini.</div>` : results.map(r=>{
+      const ath = athletes.find(a=>a.id===r.athleteId);
+      return `<div class="history-row">
+        <div class="h-left"><b>${ath?ath.name:'Atlet'}</b><span>${r.minutesPlayed!=null?r.minutesPlayed+' menit bermain':'-'}${r.notes?' · '+r.notes:''}</span></div>
+      </div>`;
+    }).join("")}
+  `;
+}
+function modalAddCompetition(){
+  const today = new Date().toISOString().slice(0,10);
+  return `
+    <div class="modal-head"><h3>Tambah Kompetisi</h3><button class="close-x" onclick="closeModal()">✕</button></div>
+    <div class="field"><label>Nama kompetisi</label><input id="cp-name" placeholder="cth. Kejurnas Muay Thai 2026"/></div>
+    <div class="field"><label>Tanggal</label><input id="cp-date" type="date" value="${today}"/></div>
+    <div class="field-row">
+      <div class="field"><label>Venue</label><input id="cp-venue"/></div>
+      <div class="field"><label>Lawan / opponent</label><input id="cp-opponent"/></div>
+    </div>
+    <div class="field-row">
+      <div class="field"><label>Tipe kompetisi</label><input id="cp-type" placeholder="cth. Regional, Nasional"/></div>
+      <div class="field"><label>Hasil</label><input id="cp-result" placeholder="cth. Menang / Kalah / Juara 1"/></div>
+    </div>
+    <div id="cp-err" class="err" style="display:none;"></div>
+    <button class="btn" onclick="submitCompetition()">Simpan Kompetisi</button>
+  `;
+}
+async function submitCompetition(){
+  const errBox = document.getElementById("cp-err");
+  const name = document.getElementById("cp-name").value.trim();
+  const dateVal = document.getElementById("cp-date").value;
+  if(!name || !dateVal){ errBox.style.display="block"; errBox.textContent="Isi nama dan tanggal kompetisi."; return; }
+  errBox.style.display="none";
+  const { error } = await sb.from("competitions").insert({
+    name, competition_date: dateVal,
+    venue: document.getElementById("cp-venue").value.trim() || null,
+    opponent: document.getElementById("cp-opponent").value.trim() || null,
+    competition_type: document.getElementById("cp-type").value.trim() || null,
+    result: document.getElementById("cp-result").value.trim() || null
+  });
+  if(error){ errBox.style.display="block"; errBox.textContent="Gagal menyimpan: " + error.message; return; }
+  await refreshCompetitions();
+  closeModal(); render();
+  showToast("Kompetisi tersimpan");
+}
+function modalAddParticipant(competitionId){
+  const athletes = loadDB(DB_KEYS.athletes);
+  return `
+    <div class="modal-head"><h3>Tambah Partisipasi Atlet</h3><button class="close-x" onclick="closeModal()">✕</button></div>
+    <div class="field"><label>Atlet</label>
+      <select id="pt-athlete">${athletes.map(a=>`<option value="${a.id}">${a.name}</option>`).join("")}</select>
+    </div>
+    <div class="field"><label>Menit bermain</label><input id="pt-minutes" type="number"/></div>
+    <div class="field"><label>Catatan performa (post-match assessment)</label><textarea id="pt-notes" rows="2"></textarea></div>
+    <div id="pt-err" class="err" style="display:none;"></div>
+    <button class="btn" onclick="submitParticipant('${competitionId}')">Simpan</button>
+  `;
+}
+async function submitParticipant(competitionId){
+  const errBox = document.getElementById("pt-err");
+  const athleteId = document.getElementById("pt-athlete").value;
+  const minutes = document.getElementById("pt-minutes").value;
+  const notes = document.getElementById("pt-notes").value.trim();
+  if(!athleteId){ errBox.style.display="block"; errBox.textContent="Pilih atlet."; return; }
+  errBox.style.display="none";
+  const { error } = await sb.from("competition_results").insert({
+    competition_id: competitionId, athlete_id: athleteId,
+    minutes_played: minutes===""?null:Number(minutes), performance_notes: notes || null
+  });
+  if(error){ errBox.style.display="block"; errBox.textContent="Gagal menyimpan: " + error.message; return; }
+  await refreshCompetitionResults();
+  closeModal(); render();
+  showToast("Partisipasi atlet tersimpan");
+}
+
+/* ---------------- CALENDAR ---------------- */
+function buildCalendarEvents(){
+  const athletes = loadDB(DB_KEYS.athletes);
+  const athName = id => (athletes.find(a=>a.id===id)||{}).name || "Atlet";
+  const events = [];
+  loadDB(DB_KEYS.loads).forEach(l=>events.push({ date:l.date, type:"Training", label:`${l.sessionType} — ${athName(l.athleteId)}`, athleteId:l.athleteId }));
+  loadDB(DB_KEYS.batterySessions).forEach(s=>{
+    const b = cache.batteries.find(x=>x.id===s.batteryId);
+    events.push({ date:s.date, type:"Testing", label:`${b?b.name:'Testing'} — ${athName(s.athleteId)}`, athleteId:s.athleteId });
+  });
+  loadDB(DB_KEYS.injuries).forEach(i=>events.push({ date:i.date, type:"Injury", label:`Cedera ${i.bodyPartLabel||''} — ${athName(i.athleteId)}`, athleteId:i.athleteId }));
+  loadDB(DB_KEYS.rehabLogs).forEach(r=>events.push({ date:r.date, type:"Rehab", label:`${r.phase} — ${athName(r.athleteId)}`, athleteId:r.athleteId }));
+  loadDB(DB_KEYS.competitions).forEach(c=>events.push({ date:c.date, type:"Competition", label:c.name, athleteId:null }));
+  loadDB(DB_KEYS.goals).filter(g=>g.deadline).forEach(g=>events.push({ date:g.deadline, type:"Assessment", label:`Deadline goal: ${g.name} — ${athName(g.athleteId)}`, athleteId:g.athleteId }));
+  return events;
+}
+const CAL_TYPE_COLOR = { Training:"#20B2AA", Testing:"#378ADD", Injury:"#E24B4A", Rehab:"#EF9F27", Competition:"#8B6FD1", Assessment:"#1D9E75" };
+function changeCalendarMonth(delta){
+  const d = new Date(state.calendarMonth);
+  state.calendarMonth = new Date(d.getFullYear(), d.getMonth()+delta, 1).getTime();
+  state.calendarSelectedDay = null;
+  render();
+}
+function selectCalendarDay(ts){ state.calendarSelectedDay = ts; render(); }
+function viewCalendar(){
+  const athletes = loadDB(DB_KEYS.athletes);
+  const f = state.calendarFilters;
+  let events = buildCalendarEvents();
+  if(f.athleteId) events = events.filter(e=>e.athleteId===f.athleteId);
+  if(f.type) events = events.filter(e=>e.type===f.type);
+
+  const monthStart = new Date(state.calendarMonth);
+  const y = monthStart.getFullYear(), m = monthStart.getMonth();
+  const firstDow = new Date(y,m,1).getDay();
+  const daysInMonth = new Date(y,m+1,0).getDate();
+  const eventsByDay = {};
+  events.forEach(e=>{
+    const d = new Date(e.date);
+    if(d.getFullYear()===y && d.getMonth()===m){
+      const key = d.getDate();
+      (eventsByDay[key] = eventsByDay[key]||[]).push(e);
+    }
+  });
+
+  let cells = "";
+  for(let i=0;i<firstDow;i++) cells += `<div class="cal-cell empty"></div>`;
+  for(let day=1; day<=daysInMonth; day++){
+    const dayTs = new Date(y,m,day).getTime();
+    const evs = eventsByDay[day] || [];
+    const isSelected = state.calendarSelectedDay===dayTs;
+    cells += `
+      <div class="cal-cell ${isSelected?'selected':''}" onclick="selectCalendarDay(${dayTs})">
+        <div class="cal-daynum">${day}</div>
+        <div class="cal-dots">${evs.slice(0,4).map(e=>`<span class="cal-dot" style="background:${CAL_TYPE_COLOR[e.type]}"></span>`).join("")}</div>
+      </div>`;
+  }
+
+  const selectedEvents = state.calendarSelectedDay!=null ? (eventsByDay[new Date(state.calendarSelectedDay).getDate()] || []) : [];
+
+  return `
+    <h2 class="page-title">Kalender</h2>
+    <div class="filter-row">
+      <select onchange="state.calendarFilters.athleteId=this.value; render();">
+        <option value="">Semua atlet</option>
+        ${athletes.map(a=>`<option value="${a.id}" ${f.athleteId===a.id?'selected':''}>${a.name}</option>`).join("")}
+      </select>
+      <select onchange="state.calendarFilters.type=this.value; render();">
+        <option value="">Semua tipe</option>
+        ${Object.keys(CAL_TYPE_COLOR).map(t=>`<option ${f.type===t?'selected':''}>${t}</option>`).join("")}
+      </select>
+    </div>
+    <div class="cal-nav">
+      <button onclick="changeCalendarMonth(-1)">‹</button>
+      <b>${monthStart.toLocaleDateString("id-ID",{month:"long", year:"numeric"})}</b>
+      <button onclick="changeCalendarMonth(1)">›</button>
+    </div>
+    <div class="cal-grid cal-dow">
+      ${["Min","Sen","Sel","Rab","Kam","Jum","Sab"].map(d=>`<div class="cal-dow-cell">${d}</div>`).join("")}
+    </div>
+    <div class="cal-grid">${cells}</div>
+
+    <h2 class="page-title" style="margin-top:16px;">${state.calendarSelectedDay!=null ? new Date(state.calendarSelectedDay).toLocaleDateString("id-ID",{day:"2-digit",month:"long",year:"numeric"}) : "Pilih tanggal untuk detail"}</h2>
+    ${state.calendarSelectedDay==null ? "" : selectedEvents.length===0 ? `<div class="chart-empty">Tidak ada event pada tanggal ini.</div>` : selectedEvents.map(e=>`
+      <div class="history-row">
+        <div class="h-left"><b>${e.label}</b></div>
+        <span class="badge" style="background:${CAL_TYPE_COLOR[e.type]}">${e.type}</span>
+      </div>
+    `).join("")}
+  `;
+}
+
+/* ---------------- KATEGORI TES / TEST BATTERY ---------------- */
+function setTestsSection(s){ state.testsSection = s; render(); }
 function viewTests(){
+  return `
+    <div class="section-tabs">
+      <button class="${state.testsSection==='categories'?'active':''}" onclick="setTestsSection('categories')">Kategori Tes</button>
+      <button class="${state.testsSection==='battery'?'active':''}" onclick="setTestsSection('battery')">Test Battery</button>
+    </div>
+    ${state.testsSection==='battery' ? viewTestBattery() : viewTestCategories()}
+  `;
+}
+function viewTestCategories(){
   const tests = loadDB(DB_KEYS.tests);
   if(tests.length===0) return `<div class="empty"><b>Belum ada kategori tes</b>Tekan tombol + untuk menambah.</div>`;
   return `
-    <h2 class="page-title">Kategori Tes Performa</h2>
     <div class="card-list">
       ${tests.map(t => `
         <div class="test-card">
@@ -725,6 +1441,135 @@ async function submitAddTest(){
   showToast("Kategori tes tersimpan");
 }
 
+/* ---------------- TEST BATTERY ---------------- */
+function viewTestBattery(){
+  const batteries = loadDB(DB_KEYS.batteries);
+  const athletes = loadDB(DB_KEYS.athletes);
+  const sessions = loadDB(DB_KEYS.batterySessions);
+  return `
+    <button class="btn" onclick="openModal('createBattery')">+ Buat Test Battery</button>
+    ${batteries.length===0 ? `<div class="chart-empty" style="margin-top:14px;">Belum ada test battery. Buat dulu battery berisi beberapa tes (contoh: Speed & Power Battery).</div>` : batteries.map(b=>{
+      const bSessions = sessions.filter(s=>s.batteryId===b.id).sort((x,y)=>y.date-x.date);
+      return `
+        <div class="chart-card">
+          <div style="display:flex;justify-content:space-between;align-items:center;">
+            <b style="font-size:13.5px;">${b.name}</b>
+            <span class="helper" style="margin:0;">${b.testIds.length} tes</span>
+          </div>
+          <p class="helper" style="margin:4px 0 10px;">${b.testIds.map(id=>{ const t=cache.tests.find(x=>x.id===id); return t?t.name:"?"; }).join(", ")}</p>
+          <button class="btn" onclick="openModal('runBattery','${b.id}')">Jalankan untuk Atlet</button>
+          ${bSessions.length===0 ? "" : `
+            <div style="margin-top:10px;">
+              ${bSessions.slice(0,5).map(s=>{
+                const ath = athletes.find(x=>x.id===s.athleteId);
+                const score = batterySessionScore(s.id);
+                return `<div class="history-row">
+                  <div class="h-left"><b>${ath?ath.name:'Atlet'}</b><span>${new Date(s.date).toLocaleDateString("id-ID",{day:"2-digit",month:"short",year:"numeric"})}</span></div>
+                  <span class="badge" style="background:${score!=null?catColor(score>=90?'Elite':score>=75?'Good':score>=50?'Average':'Poor'):'#5B6664'}">${score!=null?score:'-'}</span>
+                </div>`;
+              }).join("")}
+            </div>
+          `}
+        </div>
+      `;
+    }).join("")}
+  `;
+}
+function batterySessionScore(sessionId){
+  const results = loadDB(DB_KEYS.assessments).filter(x=>x.batterySessionId===sessionId);
+  if(results.length===0) return null;
+  const vals = results.map(r=>CATEGORY_NUMERIC[r.category] ?? 50);
+  return Math.round(vals.reduce((a,b)=>a+b,0)/vals.length);
+}
+function modalCreateBattery(){
+  const tests = loadDB(DB_KEYS.tests);
+  if(tests.length===0) return `<div class="modal-head"><h3>Buat Test Battery</h3><button class="close-x" onclick="closeModal()">✕</button></div><div class="chart-empty">Tambahkan kategori tes dulu sebelum membuat battery.</div>`;
+  return `
+    <div class="modal-head"><h3>Buat Test Battery</h3><button class="close-x" onclick="closeModal()">✕</button></div>
+    <div class="field"><label>Nama battery</label><input id="bt-name" placeholder="cth. Speed & Power Battery"/></div>
+    <div class="field"><label>Kategori</label><input id="bt-category" placeholder="cth. Speed & Power"/></div>
+    <div class="field"><label>Pilih tes yang termasuk</label></div>
+    ${tests.map(t=>`
+      <label style="display:flex;align-items:center;gap:8px;font-size:12.5px;padding:6px 0;border-bottom:1px solid var(--border);">
+        <input type="checkbox" class="bt-test-check" value="${t.id}"/> ${t.icon} ${t.name}
+      </label>
+    `).join("")}
+    <div id="bt-err" class="err" style="display:none;margin-top:10px;"></div>
+    <button class="btn" style="margin-top:12px;" onclick="submitCreateBattery()">Simpan Battery</button>
+  `;
+}
+async function submitCreateBattery(){
+  const name = document.getElementById("bt-name").value.trim();
+  const category = document.getElementById("bt-category").value.trim();
+  const checked = [...document.querySelectorAll(".bt-test-check:checked")].map(el=>el.value);
+  const errBox = document.getElementById("bt-err");
+  if(!name || checked.length===0){ errBox.style.display="block"; errBox.textContent="Isi nama battery dan pilih minimal 1 tes."; return; }
+  errBox.style.display="none";
+  const { data: row, error } = await sb.from("test_batteries").insert({ name, category }).select().single();
+  if(error){ errBox.style.display="block"; errBox.textContent="Gagal menyimpan: " + error.message; return; }
+  const items = checked.map((testId,i)=>({ battery_id: row.id, test_id: testId, sort_order: i }));
+  const { error: err2 } = await sb.from("test_battery_items").insert(items);
+  if(err2){ errBox.style.display="block"; errBox.textContent="Gagal menyimpan item battery: " + err2.message; return; }
+  await refreshBatteries();
+  closeModal(); state.testsSection="battery"; render();
+  showToast("Test battery tersimpan");
+}
+function modalRunBattery(batteryId){
+  const battery = cache.batteries.find(b=>b.id===batteryId);
+  const athletes = loadDB(DB_KEYS.athletes);
+  const today = new Date().toISOString().slice(0,10);
+  if(!battery) return "";
+  return `
+    <div class="modal-head"><h3>Jalankan ${battery.name}</h3><button class="close-x" onclick="closeModal()">✕</button></div>
+    <div class="field"><label>Atlet</label>
+      <select id="rb-athlete">${athletes.map(a=>`<option value="${a.id}">${a.name}</option>`).join("")}</select>
+    </div>
+    <div class="field"><label>Tanggal</label><input id="rb-date" type="date" value="${today}"/></div>
+    ${battery.testIds.map(testId=>{
+      const t = cache.tests.find(x=>x.id===testId);
+      return `<div class="field"><label>${t?t.name:'Tes'} (${t?t.unit:''})</label><input type="number" step="0.1" class="rb-score" data-test="${testId}"/></div>`;
+    }).join("")}
+    <div class="field"><label>Catatan (opsional)</label><input id="rb-notes" type="text"/></div>
+    <div id="rb-err" class="err" style="display:none;"></div>
+    <button class="btn" onclick="submitBatterySession('${batteryId}')">Simpan Hasil Battery</button>
+  `;
+}
+async function submitBatterySession(batteryId){
+  const errBox = document.getElementById("rb-err");
+  const athleteId = document.getElementById("rb-athlete").value;
+  const dateVal = document.getElementById("rb-date").value;
+  const notes = document.getElementById("rb-notes").value;
+  const inputs = [...document.querySelectorAll(".rb-score")];
+  const entries = inputs.map(el=>({ testId: el.dataset.test, value: el.value }));
+  if(!athleteId || !dateVal || entries.some(e=>e.value==="" || isNaN(Number(e.value)))){
+    errBox.style.display="block"; errBox.textContent="Lengkapi atlet, tanggal, dan semua skor tes."; return;
+  }
+  errBox.style.display="none";
+
+  const { data: sessionRow, error: errS } = await sb.from("battery_sessions").insert({
+    athlete_id: athleteId, battery_id: batteryId, session_date: dateVal, coach_notes: notes || null, status: "completed"
+  }).select().single();
+  if(errS){ errBox.style.display="block"; errBox.textContent="Gagal menyimpan sesi: " + errS.message; return; }
+
+  for(const e of entries){
+    const test = cache.tests.find(t=>t.id===e.testId);
+    const { data: assessRow, error: err1 } = await sb.from("assessments").insert({
+      athlete_id: athleteId, assessment_name: `${test.name} - Battery - ${dateVal}`,
+      assessment_date: dateVal, assessment_type: "battery", battery_session_id: sessionRow.id
+    }).select().single();
+    if(err1){ errBox.style.display="block"; errBox.textContent="Gagal menyimpan hasil: " + err1.message; return; }
+    const { error: err2 } = await sb.from("performance_results").insert({
+      assessment_id: assessRow.id, athlete_id: athleteId, test_id: e.testId, value: Number(e.value), unit: test.unit
+    });
+    if(err2){ errBox.style.display="block"; errBox.textContent="Gagal menyimpan hasil: " + err2.message; return; }
+  }
+
+  await refreshAssessments();
+  await refreshBatterySessions();
+  closeModal(); state.testsSection="battery"; render();
+  showToast("Hasil battery tersimpan");
+}
+
 /* ---------------- ATLET: DAFTAR ---------------- */
 function initials(name){ return name.split(" ").map(w=>w[0]).slice(0,2).join("").toUpperCase(); }
 function avatarHtml(a, size){
@@ -747,6 +1592,7 @@ function viewAthleteList(){
       </div>
     `).join("")}
     <button class="btn ghost" style="margin-top:10px;" onclick="openModal('addAthlete')">+ Tambah Atlet Baru</button>
+    <button class="btn ghost" style="margin-top:8px;" onclick="openModal('importAthletes')">Import Atlet dari CSV</button>
   `;
 }
 function openAthlete(id){ state.tab="athletes"; state.athleteId=id; state.athleteSection="overview"; state.selectedPart=null; render(); }
@@ -820,10 +1666,12 @@ async function submitAddAthlete(){
 
   const age = Number(document.getElementById("a-age").value) || null;
   const dob = age ? new Date(Date.now() - age*365.25*86400000).toISOString().slice(0,10) : null;
-  const athleteCode = await nextAthleteCode();
 
+  // athlete_code TIDAK dikirim dari client — di-generate oleh trigger
+  // assign_athlete_code() di database (lihat migration_phase3.sql) supaya
+  // aman dari duplicate saat beberapa coach menambah atlet bersamaan.
   const { data: row, error } = await sb.from("athletes").insert({
-    athlete_code: athleteCode, full_name: name,
+    full_name: name,
     sport: document.getElementById("a-sport").value.trim() || "-",
     position: document.getElementById("a-position").value.trim() || "-",
     gender: document.getElementById("a-gender").value,
@@ -844,6 +1692,126 @@ async function submitAddAthlete(){
   await refreshAthletes();
   closeModal(); setTab("athletes");
   showToast("Atlet tersimpan");
+}
+
+/* ---------------- IMPORT ATLET (CSV) ---------------- */
+let importPreviewRows = [];
+function parseCSV(text){
+  const lines = text.split(/\r?\n/).filter(l=>l.trim()!=="");
+  return lines.map(line=>{
+    // parser CSV sederhana, mendukung field ber-quote
+    const out = []; let cur = ""; let inQuotes = false;
+    for(let i=0;i<line.length;i++){
+      const ch = line[i];
+      if(inQuotes){
+        if(ch === '"' && line[i+1] === '"'){ cur += '"'; i++; }
+        else if(ch === '"'){ inQuotes = false; }
+        else cur += ch;
+      } else {
+        if(ch === '"') inQuotes = true;
+        else if(ch === ',') { out.push(cur); cur = ""; }
+        else cur += ch;
+      }
+    }
+    out.push(cur);
+    return out.map(s=>s.trim());
+  });
+}
+function modalImportAthletes(){
+  return `
+    <div class="modal-head"><h3>Import Atlet dari CSV</h3><button class="close-x" onclick="closeModal()">✕</button></div>
+    <p class="helper">Header kolom: <b>name, sport, position, gender, age, height_cm, weight_kg, status</b>. Kolom <b>name</b> wajib diisi; kolom lain opsional.</p>
+    <div class="field"><label>Pilih file CSV</label><input type="file" accept=".csv,text/csv" id="imp-file" onchange="handleImportFile(event)"/></div>
+    <div class="field"><label>atau tempel data CSV di sini</label><textarea id="imp-text" rows="5" placeholder="name,sport,position,gender,age,height_cm,weight_kg,status"></textarea></div>
+    <button class="btn ghost" onclick="previewImportCSV()">Preview</button>
+    <div id="imp-preview" style="margin-top:10px;"></div>
+    <div id="imp-err" class="err" style="display:none;margin-top:8px;"></div>
+    <button class="btn" id="imp-confirm-btn" style="margin-top:10px;display:none;" onclick="confirmImportAthletes()">Konfirmasi Import</button>
+  `;
+}
+function handleImportFile(e){
+  const file = e.target.files[0]; if(!file) return;
+  const reader = new FileReader();
+  reader.onload = ev => { document.getElementById("imp-text").value = ev.target.result; };
+  reader.readAsText(file);
+}
+function previewImportCSV(){
+  const errBox = document.getElementById("imp-err");
+  const previewBox = document.getElementById("imp-preview");
+  const confirmBtn = document.getElementById("imp-confirm-btn");
+  const text = document.getElementById("imp-text").value.trim();
+  errBox.style.display = "none"; confirmBtn.style.display = "none"; previewBox.innerHTML = "";
+  if(!text){ errBox.style.display="block"; errBox.textContent="Tempel atau unggah data CSV terlebih dahulu."; return; }
+
+  const rows = parseCSV(text);
+  const header = rows[0].map(h=>h.toLowerCase());
+  const nameIdx = header.indexOf("name");
+  if(nameIdx === -1){ errBox.style.display="block"; errBox.textContent="Kolom 'name' wajib ada di header CSV."; return; }
+  const idx = k => header.indexOf(k);
+
+  const parsed = [];
+  const problems = [];
+  for(let i=1;i<rows.length;i++){
+    const r = rows[i];
+    if(r.every(c=>c==="")) continue;
+    const name = r[nameIdx] || "";
+    if(!name){ problems.push(`Baris ${i+1}: nama kosong, dilewati.`); continue; }
+    parsed.push({
+      name,
+      sport: idx("sport")>=0 ? r[idx("sport")] : "",
+      position: idx("position")>=0 ? r[idx("position")] : "",
+      gender: idx("gender")>=0 && ["L","P"].includes(r[idx("gender")]) ? r[idx("gender")] : "L",
+      age: idx("age")>=0 && r[idx("age")] && !isNaN(Number(r[idx("age")])) ? Number(r[idx("age")]) : null,
+      height: idx("height_cm")>=0 && r[idx("height_cm")] && !isNaN(Number(r[idx("height_cm")])) ? Number(r[idx("height_cm")]) : null,
+      weight: idx("weight_kg")>=0 && r[idx("weight_kg")] && !isNaN(Number(r[idx("weight_kg")])) ? Number(r[idx("weight_kg")]) : null,
+      status: idx("status")>=0 && STATUS_UI_TO_DB[r[idx("status")]] ? r[idx("status")] : "Aktif"
+    });
+  }
+  const existingNames = new Set(loadDB(DB_KEYS.athletes).map(a=>a.name.toLowerCase()));
+  const seen = new Set();
+  parsed.forEach(p=>{
+    const key = p.name.toLowerCase();
+    if(existingNames.has(key)) problems.push(`"${p.name}" sepertinya sudah ada di data atlet.`);
+    if(seen.has(key)) problems.push(`"${p.name}" duplikat di dalam file CSV.`);
+    seen.add(key);
+  });
+
+  importPreviewRows = parsed;
+  previewBox.innerHTML = `
+    <p class="helper">${parsed.length} baris siap diimport.${problems.length ? ` ${problems.length} peringatan (lihat di bawah, baris duplikat/kosong tetap dilewati saat import).` : ""}</p>
+    <div class="card-list" style="max-height:220px;overflow:auto;">
+      ${parsed.map(p=>`<div class="history-row"><div class="h-left"><b>${p.name}</b><span>${p.sport||'-'} · ${p.position||'-'} · ${p.status}</span></div></div>`).join("")}
+    </div>
+    ${problems.length ? `<div class="err" style="display:block;margin-top:8px;">${problems.join("<br/>")}</div>` : ""}
+  `;
+  if(parsed.length) confirmBtn.style.display = "block";
+}
+async function confirmImportAthletes(){
+  const errBox = document.getElementById("imp-err");
+  const confirmBtn = document.getElementById("imp-confirm-btn");
+  confirmBtn.disabled = true; confirmBtn.textContent = "Mengimport...";
+  const existingNames = new Set(loadDB(DB_KEYS.athletes).map(a=>a.name.toLowerCase()));
+  const toInsert = [];
+  const seen = new Set();
+  importPreviewRows.forEach(p=>{
+    const key = p.name.toLowerCase();
+    if(existingNames.has(key) || seen.has(key)) return; // skip duplikat, konsisten dengan preview
+    seen.add(key);
+    const dob = p.age ? new Date(Date.now() - p.age*365.25*86400000).toISOString().slice(0,10) : null;
+    toInsert.push({
+      full_name: p.name, sport: p.sport || "-", position: p.position || "-", gender: p.gender,
+      date_of_birth: dob, height_cm: p.height, weight_kg: p.weight, status: STATUS_UI_TO_DB[p.status] || "active"
+    });
+  });
+  if(toInsert.length === 0){ errBox.style.display="block"; errBox.textContent="Tidak ada baris valid untuk diimport."; confirmBtn.disabled=false; confirmBtn.textContent="Konfirmasi Import"; return; }
+
+  const { error } = await sb.from("athletes").insert(toInsert);
+  if(error){ errBox.style.display="block"; errBox.textContent="Gagal import: " + error.message; confirmBtn.disabled=false; confirmBtn.textContent="Konfirmasi Import"; return; }
+
+  importPreviewRows = [];
+  await refreshAthletes();
+  closeModal(); setTab("athletes");
+  showToast(`${toInsert.length} atlet berhasil diimport`);
 }
 
 /* ---------------- ATLET: DETAIL ---------------- */
@@ -870,17 +1838,29 @@ function viewAthleteDetail(){
 
     <div class="section-tabs">
       <button class="${state.athleteSection==='overview'?'active':''}" onclick="setAthleteSection('overview')">Ringkasan</button>
+      <button class="${state.athleteSection==='readiness'?'active':''}" onclick="setAthleteSection('readiness')">Readiness</button>
+      <button class="${state.athleteSection==='load'?'active':''}" onclick="setAthleteSection('load')">Training Load</button>
+      <button class="${state.athleteSection==='goals'?'active':''}" onclick="setAthleteSection('goals')">Goals</button>
+      <button class="${state.athleteSection==='profile'?'active':''}" onclick="setAthleteSection('profile')">Performance Profile</button>
       <button class="${state.athleteSection==='performance'?'active':''}" onclick="setAthleteSection('performance')">Grafik Performa</button>
       <button class="${state.athleteSection==='improvement'?'active':''}" onclick="setAthleteSection('improvement')">Before/After</button>
       <button class="${state.athleteSection==='injury'?'active':''}" onclick="setAthleteSection('injury')">Cedera</button>
+      <button class="${state.athleteSection==='asymmetry'?'active':''}" onclick="setAthleteSection('asymmetry')">Asymmetry</button>
+      <button class="${state.athleteSection==='notes'?'active':''}" onclick="setAthleteSection('notes')">Catatan Coach</button>
       <button class="${state.athleteSection==='photo'?'active':''}" onclick="setAthleteSection('photo')">Foto Profil</button>
     </div>
 
     <div id="athlete-section-body">
       ${state.athleteSection==='overview' ? athleteOverview(a) : ""}
+      ${state.athleteSection==='readiness' ? athleteReadinessSection(a) : ""}
+      ${state.athleteSection==='load' ? athleteLoadSection(a) : ""}
+      ${state.athleteSection==='goals' ? athleteGoalsSection(a) : ""}
+      ${state.athleteSection==='profile' ? athleteProfileSection(a) : ""}
       ${state.athleteSection==='performance' ? athletePerformanceSection(a) : ""}
       ${state.athleteSection==='improvement' ? athleteImprovementSection(a) : ""}
       ${state.athleteSection==='injury' ? athleteInjurySection(a) : ""}
+      ${state.athleteSection==='asymmetry' ? athleteAsymmetrySection(a) : ""}
+      ${state.athleteSection==='notes' ? athleteNotesSection(a) : ""}
       ${state.athleteSection==='photo' ? athletePhotoSection(a) : ""}
     </div>
   `;
@@ -986,11 +1966,42 @@ function drawImprovementChart(){
   });
 }
 
+/* ---------------- PERFORMANCE PROFILE (RADAR) ---------------- */
+function athleteProfileSection(a){
+  const profile = buildPerformanceProfile(a.id);
+  const hasAny = profile.current.some(v=>v!=null);
+  return `
+    <div class="chart-card">
+      <h3>Performance Profile</h3>
+      ${!hasAny ? `<div class="chart-empty">Belum cukup data untuk membentuk profil performa.</div>` : `<canvas id="chart-radar" height="260"></canvas>`}
+    </div>
+    <div class="info-grid">
+      ${profile.labels.map((l,i)=>`<div class="info-item"><div class="k">${l}</div><div class="v">${profile.current[i]!=null?profile.current[i]:'No Data'}</div></div>`).join("")}
+    </div>
+  `;
+}
+function drawPerformanceRadarChart(){
+  destroyChart("chart-radar");
+  const canvas = document.getElementById("chart-radar"); if(!canvas) return;
+  const profile = buildPerformanceProfile(state.athleteId);
+  chartInstances["chart-radar"] = new Chart(canvas, {
+    type:"radar",
+    data:{
+      labels: profile.labels,
+      datasets:[
+        { label:"Current", data: profile.current.map(v=>v??0), borderColor:"#20B2AA", backgroundColor:"rgba(32,178,170,0.2)", pointRadius:3 },
+        { label:"Previous", data: profile.previous.map(v=>v??0), borderColor:"#B9C4C2", backgroundColor:"rgba(185,196,194,0.15)", pointRadius:3 }
+      ]
+    },
+    options:{ responsive:true, scales:{ r:{ min:0, max:100, ticks:{stepSize:25, font:{size:9}}, pointLabels:{font:{size:10}} } }, plugins:{ legend:{position:"bottom", labels:{font:{size:10}}} } }
+  });
+}
+
 /* ---------------- CEDERA / BODY MAP ---------------- */
 function athleteInjurySection(a){
   const injuries = loadDB(DB_KEYS.injuries).filter(x=>x.athleteId===a.id);
   const parts = state.bodyView==="front" ? BODY_PARTS_FRONT : BODY_PARTS_BACK;
-  const injuredKeys = new Set(injuries.filter(i=>i.status!=="Sembuh").map(i=>i.bodyPart));
+  const injuredKeys = new Set(injuries.filter(i=>!["Sembuh","Closed"].includes(i.status)).map(i=>i.bodyPart));
 
   return `
     <div class="bodymap-toggle">
@@ -1022,12 +2033,25 @@ function injuryFormPanel(a, parts){
     <div class="injury-panel">
       <div class="selected-area">Selected Area: <b>${part.label}</b></div>
       <div class="field"><label>Jenis cedera</label><input id="inj-type" placeholder="Contoh: Knee Pain"/></div>
+      <div class="field"><label>Diagnosis / deskripsi</label><input id="inj-diagnosis" placeholder="Contoh: Grade 1 ACL sprain"/></div>
+      <div class="field"><label>Mechanism</label><input id="inj-mechanism" placeholder="Contoh: Non-contact, saat mendarat dari jump"/></div>
       <div class="field-row">
         <div class="field"><label>Severity</label><select id="inj-severity"><option value="Ringan">Minor</option><option value="Sedang">Moderate</option><option value="Berat">Severe</option></select></div>
-        <div class="field"><label>Status</label><select id="inj-status"><option value="Aktif">Active</option><option value="Recovering">Recovering</option><option value="Sembuh">Cleared</option></select></div>
+        <div class="field"><label>Status</label>
+          <select id="inj-status">
+            <option value="Aktif">Active</option><option value="Recovering">Recovering</option>
+            <option value="Rehab">Rehab</option><option value="Return to Training">Return to Training</option>
+            <option value="Return to Play">Return to Play</option><option value="Sembuh">Cleared</option>
+            <option value="Kronis">Kronis</option><option value="Closed">Closed</option>
+          </select>
+        </div>
       </div>
-      <div class="field"><label>Tanggal cedera</label><input id="inj-date" type="date" value="${new Date().toISOString().slice(0,10)}"/></div>
+      <div class="field-row">
+        <div class="field"><label>Tanggal cedera</label><input id="inj-date" type="date" value="${new Date().toISOString().slice(0,10)}"/></div>
+        <div class="field"><label>Estimasi pemulihan</label><input id="inj-recovery" type="date"/></div>
+      </div>
       <div class="field"><label>Catatan</label><textarea id="inj-notes" rows="2" placeholder="Pain during jumping movement"></textarea></div>
+      <div class="field"><label>Catatan medis (opsional)</label><textarea id="inj-medicalnotes" rows="2" placeholder="Catatan dokter/fisioterapis"></textarea></div>
       <div class="field"><label>Foto cedera (opsional)</label><input type="file" accept="image/*" onchange="handleInjuryPhoto(event)"/></div>
       <button class="btn" onclick="submitInjury('${a.id}')">Simpan Cedera</button>
     </div>
@@ -1054,11 +2078,18 @@ async function submitInjury(athleteId){
   const status = document.getElementById("inj-status").value;
   const dateVal = document.getElementById("inj-date").value;
   const notes = document.getElementById("inj-notes").value.trim();
+  const diagnosis = document.getElementById("inj-diagnosis").value.trim();
+  const mechanism = document.getElementById("inj-mechanism").value.trim();
+  const recoveryVal = document.getElementById("inj-recovery").value;
+  const medicalNotes = document.getElementById("inj-medicalnotes").value.trim();
 
   const { data: row, error } = await sb.from("injuries").insert({
     athlete_id: athleteId, body_part_id: bp.id, body_side: deriveBodySide(state.selectedPart),
     injury_type: type, severity: SEVERITY_UI_TO_DB[severity], status: INJSTATUS_UI_TO_DB[status],
-    injury_date: dateVal, notes
+    injury_date: dateVal, notes,
+    diagnosis: diagnosis || null, mechanism: mechanism || null,
+    estimated_recovery_date: recoveryVal || null, medical_notes: medicalNotes || null,
+    clearance_status: "pending"
   }).select().single();
 
   if(error){ showToast("Gagal menyimpan: " + error.message); return; }
@@ -1099,12 +2130,22 @@ function injuryFilters(){
         <option value="">Semua status</option>
         <option ${state.filters.status==='Aktif'?'selected':''}>Aktif</option>
         <option ${state.filters.status==='Recovering'?'selected':''}>Recovering</option>
+        <option ${state.filters.status==='Rehab'?'selected':''}>Rehab</option>
+        <option ${state.filters.status==='Return to Training'?'selected':''}>Return to Training</option>
+        <option ${state.filters.status==='Return to Play'?'selected':''}>Return to Play</option>
         <option ${state.filters.status==='Sembuh'?'selected':''}>Sembuh</option>
+        <option ${state.filters.status==='Kronis'?'selected':''}>Kronis</option>
+        <option ${state.filters.status==='Closed'?'selected':''}>Closed</option>
       </select>
     </div>
   `;
 }
-function statusColor(status){ return {Aktif:"#E24B4A", Recovering:"#378ADD", Sembuh:"#1D9E75"}[status] || "#5B6664"; }
+function statusColor(status){
+  return {
+    Aktif:"#E24B4A", Recovering:"#378ADD", Rehab:"#EF9F27", "Return to Training":"#8B6FD1",
+    "Return to Play":"#159A94", Sembuh:"#1D9E75", Kronis:"#5B6664", Closed:"#5B6664"
+  }[status] || "#5B6664";
+}
 function severityColor(sev){ return {Ringan:"#EF9F27", Sedang:"#E2841F", Berat:"#E24B4A"}[sev] || "#5B6664"; }
 
 function injuryHistoryTable(injuries){
@@ -1115,7 +2156,7 @@ function injuryHistoryTable(injuries){
   rows = rows.sort((a,b)=>b.date-a.date);
   if(rows.length===0) return `<div class="chart-empty">Tidak ada catatan cedera.</div>`;
   return rows.map(i => `
-    <div class="injury-row">
+    <div class="injury-row" style="cursor:pointer;" onclick="openModal('injuryDetail','${i.id}')">
       <div class="injury-row-top">
         <b>${i.bodyPartLabel} · ${i.injuryType}</b>
         <span class="badge" style="background:${statusColor(i.status)}">${i.status}</span>
@@ -1126,7 +2167,473 @@ function injuryHistoryTable(injuries){
   `).join("");
 }
 
+/* ---------------- INJURY DETAIL / REHAB / RETURN TO PLAY ---------------- */
+function modalInjuryDetail(injuryId){
+  const i = loadDB(DB_KEYS.injuries).find(x=>x.id===injuryId);
+  if(!i) return "";
+  const logs = loadDB(DB_KEYS.rehabLogs).filter(r=>r.injuryId===injuryId).sort((a,b)=>a.date-b.date);
+  const timeline = [
+    { date:i.date, label:`Cedera dicatat — ${i.injuryType}`, kind:"injury" },
+    ...logs.map(l=>({ date:l.date, label:`${l.phase} — ${l.exercises || 'Sesi rehab'}`, kind:"rehab" }))
+  ].sort((a,b)=>a.date-b.date);
+
+  return `
+    <div class="modal-head"><h3>${i.bodyPartLabel} · ${i.injuryType}</h3><button class="close-x" onclick="closeModal()">✕</button></div>
+
+    <div class="info-grid">
+      <div class="info-item"><div class="k">Tanggal cedera</div><div class="v">${new Date(i.date).toLocaleDateString("id-ID",{day:"2-digit",month:"short",year:"numeric"})}</div></div>
+      <div class="info-item"><div class="k">Severity</div><div class="v" style="color:${severityColor(i.severity)}">${i.severity}</div></div>
+      <div class="info-item"><div class="k">Mechanism</div><div class="v">${i.mechanism || '-'}</div></div>
+      <div class="info-item"><div class="k">Estimasi pemulihan</div><div class="v">${i.estimatedRecovery ? new Date(i.estimatedRecovery).toLocaleDateString("id-ID",{day:"2-digit",month:"short",year:"numeric"}) : '-'}</div></div>
+    </div>
+    ${i.diagnosis ? `<p class="helper" style="margin:10px 0 0;"><b>Diagnosis:</b> ${i.diagnosis}</p>` : ""}
+    ${i.notes ? `<p class="helper" style="margin:4px 0 0;"><b>Catatan:</b> ${i.notes}</p>` : ""}
+    ${i.medicalNotes ? `<p class="helper" style="margin:4px 0 0;"><b>Catatan medis:</b> ${i.medicalNotes}</p>` : ""}
+
+    <div class="field-row" style="margin-top:14px;">
+      <div class="field"><label>Status</label>
+        <select id="idet-status" onchange="submitUpdateInjuryStatus('${i.id}', this.value)">
+          ${["Aktif","Recovering","Rehab","Return to Training","Return to Play","Sembuh","Kronis","Closed"].map(s=>`<option ${i.status===s?'selected':''}>${s}</option>`).join("")}
+        </select>
+      </div>
+      <div class="field"><label>Clearance</label>
+        <select id="idet-clearance" onchange="submitUpdateClearance('${i.id}', this.value)">
+          ${["Pending","Not Cleared","Cleared"].map(s=>`<option ${i.clearanceStatus===s?'selected':''}>${s}</option>`).join("")}
+        </select>
+      </div>
+    </div>
+
+    <h2 class="page-title" style="margin-top:16px;">Injury → Rehab Timeline</h2>
+    ${timeline.map(t=>`
+      <div class="history-row">
+        <div class="h-left"><b>${new Date(t.date).toLocaleDateString("id-ID",{day:"2-digit",month:"short",year:"numeric"})}</b><span>${t.label}</span></div>
+        <span class="badge" style="background:${t.kind==='injury'?'#E24B4A':'#378ADD'}">${t.kind==='injury'?'Cedera':'Rehab'}</span>
+      </div>
+    `).join("")}
+
+    <button class="btn" style="margin-top:12px;" onclick="openModal('addRehabLog','${i.id}|${i.athleteId}')">+ Catat Sesi Rehab</button>
+  `;
+}
+async function submitUpdateInjuryStatus(injuryId, uiStatus){
+  const { error } = await sb.from("injuries").update({ status: INJSTATUS_UI_TO_DB[uiStatus] }).eq("id", injuryId);
+  if(error){ showToast("Gagal update status: " + error.message); return; }
+  await refreshInjuries();
+  showToast("Status cedera diperbarui");
+}
+async function submitUpdateClearance(injuryId, uiClearance){
+  const { error } = await sb.from("injuries").update({ clearance_status: CLEARANCE_UI_TO_DB[uiClearance] }).eq("id", injuryId);
+  if(error){ showToast("Gagal update clearance: " + error.message); return; }
+  await refreshInjuries();
+  showToast("Status clearance diperbarui");
+}
+function modalAddRehabLog(payload){
+  const [injuryId, athleteId] = payload.split("|");
+  const today = new Date().toISOString().slice(0,10);
+  return `
+    <div class="modal-head"><h3>Catat Sesi Rehab</h3><button class="close-x" onclick="closeModal()">✕</button></div>
+    <div class="field"><label>Tanggal</label><input id="rh-date" type="date" value="${today}"/></div>
+    <div class="field"><label>Fase rehab</label>
+      <select id="rh-phase">
+        <option>Phase 1 - Protection</option><option>Phase 2 - Mobility</option>
+        <option>Phase 3 - Strength</option><option>Phase 4 - Return to Training</option>
+        <option>Phase 5 - Return to Play</option>
+      </select>
+    </div>
+    <div class="field"><label>Latihan / exercises</label><textarea id="rh-exercises" rows="2" placeholder="cth. Isometric quad, range of motion drill"></textarea></div>
+    <div class="field"><label>Catatan progress</label><textarea id="rh-progress" rows="2"></textarea></div>
+    <div class="field"><label>Pain level (1-5)</label>
+      <select id="rh-pain"><option value="1">1</option><option value="2">2</option><option value="3" selected>3</option><option value="4">4</option><option value="5">5</option></select>
+    </div>
+    <div id="rh-err" class="err" style="display:none;"></div>
+    <button class="btn" onclick="submitRehabLog('${injuryId}','${athleteId}')">Simpan Sesi Rehab</button>
+  `;
+}
+async function submitRehabLog(injuryId, athleteId){
+  const errBox = document.getElementById("rh-err");
+  const dateVal = document.getElementById("rh-date").value;
+  if(!dateVal){ errBox.style.display="block"; errBox.textContent="Pilih tanggal."; return; }
+  errBox.style.display="none";
+  const { error } = await sb.from("rehab_logs").insert({
+    injury_id: injuryId, athlete_id: athleteId, log_date: dateVal,
+    phase: document.getElementById("rh-phase").value,
+    exercises: document.getElementById("rh-exercises").value.trim() || null,
+    progress_notes: document.getElementById("rh-progress").value.trim() || null,
+    pain_level: Number(document.getElementById("rh-pain").value)
+  });
+  if(error){ errBox.style.display="block"; errBox.textContent="Gagal menyimpan: " + error.message; return; }
+  await refreshRehabLogs();
+  closeModal();
+  openModal("injuryDetail", injuryId);
+  showToast("Sesi rehab tersimpan");
+}
+
+/* ---------------- ASYMMETRY ANALYSIS ---------------- */
+function athleteAsymmetrySection(a){
+  const rows = loadDB(DB_KEYS.asymmetry).filter(x=>x.athleteId===a.id).sort((x,y)=>y.date-x.date);
+  return `
+    <p class="helper" style="margin-bottom:10px;">Bandingkan hasil kiri vs kanan untuk tes bilateral (cth. single-leg jump, hamstring strength). Ini indikator pemantauan, bukan diagnosis medis.</p>
+    <button class="btn" onclick="openModal('addAsymmetry','${a.id}')">+ Cek Asymmetry</button>
+    ${rows.length===0 ? `<div class="chart-empty" style="margin-top:14px;">Belum ada data asymmetry.</div>` : rows.map(r=>{
+      const zone = asymmetryZone(r.asymmetryPct, 10);
+      return `
+        <div class="chart-card">
+          <div style="display:flex;justify-content:space-between;align-items:center;">
+            <b style="font-size:13.5px;">${r.testName}</b>
+            <span class="badge" style="background:${zone.color}">${r.asymmetryPct}%</span>
+          </div>
+          <p class="helper" style="margin:4px 0 6px;">${new Date(r.date).toLocaleDateString("id-ID",{day:"2-digit",month:"short",year:"numeric"})} · ${zone.label}</p>
+          <div style="display:flex;justify-content:space-between;font-size:11.5px;color:var(--muted);">
+            <span>Left: ${r.left} ${r.unit}</span>
+            <span>Right: ${r.right} ${r.unit}</span>
+            <span>Selisih: ${r.diff} ${r.unit}</span>
+          </div>
+        </div>
+      `;
+    }).join("")}
+  `;
+}
+function modalAddAsymmetry(athleteId){
+  const today = new Date().toISOString().slice(0,10);
+  return `
+    <div class="modal-head"><h3>Cek Asymmetry</h3><button class="close-x" onclick="closeModal()">✕</button></div>
+    <div class="field"><label>Nama tes</label><input id="asy-name" placeholder="cth. Single Leg Broad Jump"/></div>
+    <div class="field"><label>Satuan</label><input id="asy-unit" placeholder="cth. cm, kg"/></div>
+    <div class="field-row">
+      <div class="field"><label>Nilai kiri (Left)</label><input id="asy-left" type="number" step="0.01"/></div>
+      <div class="field"><label>Nilai kanan (Right)</label><input id="asy-right" type="number" step="0.01"/></div>
+    </div>
+    <div class="field"><label>Tanggal</label><input id="asy-date" type="date" value="${today}"/></div>
+    <div class="field"><label>Catatan (opsional)</label><input id="asy-notes" type="text"/></div>
+    <div id="asy-err" class="err" style="display:none;"></div>
+    <button class="btn" onclick="submitAsymmetry('${athleteId}')">Simpan</button>
+  `;
+}
+async function submitAsymmetry(athleteId){
+  const errBox = document.getElementById("asy-err");
+  const name = document.getElementById("asy-name").value.trim();
+  const left = document.getElementById("asy-left").value;
+  const right = document.getElementById("asy-right").value;
+  const dateVal = document.getElementById("asy-date").value;
+  if(!name || left==="" || right==="" || !dateVal){ errBox.style.display="block"; errBox.textContent="Lengkapi nama tes, nilai kiri, kanan, dan tanggal."; return; }
+  errBox.style.display="none";
+  const { error } = await sb.from("asymmetry_checks").insert({
+    athlete_id: athleteId, test_name: name, unit: document.getElementById("asy-unit").value.trim() || null,
+    left_value: Number(left), right_value: Number(right), checked_date: dateVal,
+    notes: document.getElementById("asy-notes").value.trim() || null
+  });
+  if(error){ errBox.style.display="block"; errBox.textContent="Gagal menyimpan: " + error.message; return; }
+  await refreshAsymmetry();
+  closeModal(); render();
+  showToast("Data asymmetry tersimpan");
+}
+
+/* ---------------- COACH NOTES ---------------- */
+function athleteNotesSection(a){
+  const rows = loadDB(DB_KEYS.notes).filter(x=>x.athleteId===a.id).sort((x,y)=>y.date-x.date);
+  const catColorMap = {Performance:"#378ADD", Training:"#20B2AA", Behavior:"#8B6FD1", Recovery:"#1D9E75", Injury:"#E24B4A", Competition:"#EF9F27", General:"#5B6664"};
+  return `
+    <button class="btn" onclick="openModal('addNote','${a.id}')">+ Tambah Catatan</button>
+    ${rows.length===0 ? `<div class="chart-empty" style="margin-top:14px;">Belum ada catatan coach.</div>` : rows.map(n=>`
+      <div class="history-row" style="align-items:flex-start;">
+        <div class="h-left">
+          <b>${new Date(n.date).toLocaleDateString("id-ID",{day:"2-digit",month:"short",year:"numeric"})}</b>
+          <span>${n.note}</span>
+          ${n.followUp ? `<span style="color:var(--muted);">Follow-up: ${new Date(n.followUp).toLocaleDateString("id-ID",{day:"2-digit",month:"short",year:"numeric"})}</span>` : ""}
+        </div>
+        <span class="badge" style="background:${catColorMap[n.category]||'#5B6664'}">${n.category}</span>
+      </div>
+    `).join("")}
+  `;
+}
+function modalAddNote(athleteId){
+  const today = new Date().toISOString().slice(0,10);
+  return `
+    <div class="modal-head"><h3>Tambah Catatan Coach</h3><button class="close-x" onclick="closeModal()">✕</button></div>
+    <div class="field"><label>Tanggal</label><input id="nt-date" type="date" value="${today}"/></div>
+    <div class="field"><label>Kategori</label>
+      <select id="nt-category">${NOTE_CATEGORIES.map(c=>`<option>${c}</option>`).join("")}</select>
+    </div>
+    <div class="field"><label>Catatan</label><textarea id="nt-note" rows="3" placeholder="Catatan tentang atlet..."></textarea></div>
+    <div class="field"><label>Priority</label>
+      <select id="nt-priority"><option>Low</option><option selected>Medium</option><option>High</option></select>
+    </div>
+    <div class="field"><label>Follow-up date (opsional)</label><input id="nt-followup" type="date"/></div>
+    <div id="nt-err" class="err" style="display:none;"></div>
+    <button class="btn" onclick="submitNote('${athleteId}')">Simpan Catatan</button>
+  `;
+}
+async function submitNote(athleteId){
+  const errBox = document.getElementById("nt-err");
+  const note = document.getElementById("nt-note").value.trim();
+  const dateVal = document.getElementById("nt-date").value;
+  if(!note || !dateVal){ errBox.style.display="block"; errBox.textContent="Isi tanggal dan catatan."; return; }
+  errBox.style.display="none";
+  const followUp = document.getElementById("nt-followup").value;
+  const { error } = await sb.from("athlete_notes").insert({
+    athlete_id: athleteId, note_date: dateVal, category: document.getElementById("nt-category").value,
+    note, priority: document.getElementById("nt-priority").value, follow_up_date: followUp || null
+  });
+  if(error){ errBox.style.display="block"; errBox.textContent="Gagal menyimpan: " + error.message; return; }
+  await refreshNotes();
+  closeModal(); render();
+  showToast("Catatan tersimpan");
+}
+
 /* ---------------- FOTO PROFIL ---------------- */
+/* ---------------- DAILY READINESS ---------------- */
+function athleteReadinessSection(a){
+  const rows = loadDB(DB_KEYS.readiness).filter(x=>x.athleteId===a.id).sort((x,y)=>y.date-x.date);
+  const latest = rows[0];
+  return `
+    <div class="stat-grid">
+      <div class="stat-card">
+        <div class="label">READINESS TERAKHIR</div>
+        <div class="value" style="color:${latest?readinessCategory(latest.score).color:'inherit'}">${latest?latest.score:'-'}</div>
+        <div class="helper" style="margin:2px 0 0;">${latest?readinessCategory(latest.score).label:'Belum ada data'}</div>
+      </div>
+      <div class="stat-card"><div class="label">TANGGAL TERAKHIR</div><div class="value" style="font-size:14px;">${latest?new Date(latest.date).toLocaleDateString("id-ID",{day:"2-digit",month:"short"}):'-'}</div></div>
+    </div>
+    <button class="btn" onclick="openModal('addReadiness','${a.id}')">+ Input Readiness Hari Ini</button>
+    <div class="chart-card" style="margin-top:16px;">
+      <h3>Tren Readiness (30 Hari Terakhir)</h3>
+      ${rows.length===0 ? `<div class="chart-empty">Belum ada data readiness.</div>` : `<canvas id="chart-readiness" height="180"></canvas>`}
+    </div>
+    ${rows.length===0 ? "" : `
+      <h2 class="page-title">Riwayat</h2>
+      ${rows.slice(0,15).map(r=>`
+        <div class="history-row">
+          <div class="h-left">
+            <b>${new Date(r.date).toLocaleDateString("id-ID",{day:"2-digit",month:"short",year:"numeric"})}</b>
+            <span>Tidur ${r.sleepDuration??'-'}j · Fatigue ${r.fatigue??'-'} · Soreness ${r.soreness??'-'} · Stress ${r.stress??'-'}</span>
+          </div>
+          <span class="badge" style="background:${readinessCategory(r.score).color}">${r.score}</span>
+        </div>
+      `).join("")}
+    `}
+  `;
+}
+function drawReadinessChart(){
+  destroyChart("chart-readiness");
+  const canvas = document.getElementById("chart-readiness"); if(!canvas) return;
+  const rows = loadDB(DB_KEYS.readiness).filter(x=>x.athleteId===state.athleteId).sort((a,b)=>a.date-b.date).slice(-30);
+  if(rows.length===0) return;
+  const labels = rows.map(r=>new Date(r.date).toLocaleDateString("id-ID",{day:"2-digit",month:"short"}));
+  const data = rows.map(r=>r.score);
+  chartInstances["chart-readiness"] = new Chart(canvas, {
+    type:"line",
+    data:{ labels, datasets:[{ label:"Readiness Score", data, borderColor:"#20B2AA", backgroundColor:"rgba(32,178,170,0.08)", pointRadius:3, tension:0.25, fill:true }] },
+    options:{ responsive:true, plugins:{legend:{display:false}}, scales:{ y:{min:0,max:100,ticks:{font:{size:10}}}, x:{ticks:{font:{size:10}}} } }
+  });
+}
+function modalAddReadiness(athleteId){
+  const today = new Date().toISOString().slice(0,10);
+  const scaleOptions = (id,label) => `
+    <div class="field"><label>${label} (1-5)</label>
+      <select id="${id}"><option value="1">1</option><option value="2">2</option><option value="3" selected>3</option><option value="4">4</option><option value="5">5</option></select>
+    </div>`;
+  return `
+    <div class="modal-head"><h3>Input Daily Readiness</h3><button class="close-x" onclick="closeModal()">✕</button></div>
+    <div class="field"><label>Tanggal</label><input id="rd-date" type="date" value="${today}"/></div>
+    <div class="field"><label>Durasi tidur (jam)</label><input id="rd-sleepdur" type="number" step="0.5" placeholder="cth. 7.5"/></div>
+    ${scaleOptions("rd-sleepq","Kualitas tidur")}
+    ${scaleOptions("rd-fatigue","Fatigue")}
+    ${scaleOptions("rd-soreness","Muscle soreness")}
+    ${scaleOptions("rd-stress","Stress")}
+    ${scaleOptions("rd-mood","Mood")}
+    ${scaleOptions("rd-energy","Energy")}
+    ${scaleOptions("rd-motivation","Motivation")}
+    <div class="field"><label>Catatan (opsional)</label><input id="rd-notes" type="text" placeholder="Catatan tambahan"/></div>
+    <div id="rd-err" class="err" style="display:none;"></div>
+    <button class="btn" onclick="submitReadiness('${athleteId}')">Simpan Readiness</button>
+  `;
+}
+async function submitReadiness(athleteId){
+  const errBox = document.getElementById("rd-err");
+  const v = {
+    sleepQuality: document.getElementById("rd-sleepq").value,
+    fatigue: document.getElementById("rd-fatigue").value,
+    soreness: document.getElementById("rd-soreness").value,
+    stress: document.getElementById("rd-stress").value,
+    mood: document.getElementById("rd-mood").value,
+    energy: document.getElementById("rd-energy").value,
+    motivation: document.getElementById("rd-motivation").value
+  };
+  const dateVal = document.getElementById("rd-date").value;
+  const sleepDur = document.getElementById("rd-sleepdur").value;
+  const notes = document.getElementById("rd-notes").value;
+  if(!dateVal){ errBox.style.display="block"; errBox.textContent="Pilih tanggal."; return; }
+  errBox.style.display="none";
+  const score = computeReadinessScore(v);
+  const { error } = await sb.from("readiness_logs").insert({
+    athlete_id: athleteId, log_date: dateVal,
+    sleep_duration: sleepDur===""?null:Number(sleepDur),
+    sleep_quality: Number(v.sleepQuality), fatigue: Number(v.fatigue), soreness: Number(v.soreness),
+    stress: Number(v.stress), mood: Number(v.mood), energy: Number(v.energy), motivation: Number(v.motivation),
+    readiness_score: score, notes: notes || null
+  });
+  if(error){ errBox.style.display="block"; errBox.textContent="Gagal menyimpan: " + error.message; return; }
+  await refreshReadiness();
+  closeModal(); render();
+  showToast(`Readiness tersimpan · ${score} (${readinessCategory(score).label})`);
+}
+
+/* ---------------- TRAINING LOAD ---------------- */
+function athleteLoadSection(a){
+  const rows = loadDB(DB_KEYS.loads).filter(x=>x.athleteId===a.id).sort((x,y)=>y.date-x.date);
+  const now = Date.now();
+  const { acuteLoad, chronicWeeklyAvg, ratio } = computeACWR(rows, now);
+  const zone = acwrZone(ratio);
+  const weekAgo = now - 7*86400000;
+  const weekLoad = sumLoadInRange(rows, weekAgo, now);
+  return `
+    <div class="stat-grid">
+      <div class="stat-card"><div class="label">BEBAN 7 HARI</div><div class="value">${weekLoad}</div></div>
+      <div class="stat-card"><div class="label">ACWR</div><div class="value" style="color:${zone.color}">${ratio!=null?ratio.toFixed(2):'-'}</div></div>
+    </div>
+    <div class="helper" style="margin:-6px 0 14px;color:${zone.color};font-weight:700;">${zone.label}</div>
+    <button class="btn" onclick="openModal('addTrainingSession','${a.id}')">+ Catat Sesi Latihan</button>
+    <div class="chart-card" style="margin-top:16px;">
+      <h3>Beban Latihan Harian (30 Hari Terakhir)</h3>
+      ${rows.length===0 ? `<div class="chart-empty">Belum ada data training load.</div>` : `<canvas id="chart-load" height="180"></canvas>`}
+    </div>
+    ${rows.length===0 ? "" : `
+      <h2 class="page-title">Riwayat Sesi</h2>
+      ${rows.slice(0,15).map(r=>`
+        <div class="history-row">
+          <div class="h-left">
+            <b>${r.sessionType} · ${new Date(r.date).toLocaleDateString("id-ID",{day:"2-digit",month:"short",year:"numeric"})}</b>
+            <span>${r.duration} menit × RPE ${r.rpe}</span>
+          </div>
+          <span class="badge" style="background:#159A94">${r.load}</span>
+        </div>
+      `).join("")}
+    `}
+  `;
+}
+function drawLoadChart(){
+  destroyChart("chart-load");
+  const canvas = document.getElementById("chart-load"); if(!canvas) return;
+  const rows = loadDB(DB_KEYS.loads).filter(x=>x.athleteId===state.athleteId).sort((a,b)=>a.date-b.date).slice(-30);
+  if(rows.length===0) return;
+  const labels = rows.map(r=>new Date(r.date).toLocaleDateString("id-ID",{day:"2-digit",month:"short"}));
+  const data = rows.map(r=>r.load);
+  chartInstances["chart-load"] = new Chart(canvas, {
+    type:"bar",
+    data:{ labels, datasets:[{ label:"Session Load", data, backgroundColor:"#20B2AA" }] },
+    options:{ responsive:true, plugins:{legend:{display:false}}, scales:{ y:{ticks:{font:{size:10}}}, x:{ticks:{font:{size:10}}} } }
+  });
+}
+function modalAddTrainingSession(athleteId){
+  const today = new Date().toISOString().slice(0,10);
+  return `
+    <div class="modal-head"><h3>Catat Sesi Latihan</h3><button class="close-x" onclick="closeModal()">✕</button></div>
+    <div class="field"><label>Tanggal</label><input id="tl-date" type="date" value="${today}"/></div>
+    <div class="field"><label>Jenis sesi</label><input id="tl-type" type="text" placeholder="cth. Strength, Conditioning, Sparring"/></div>
+    <div class="field"><label>Durasi (menit)</label><input id="tl-duration" type="number" placeholder="cth. 60"/></div>
+    <div class="field"><label>Session RPE (1-10)</label><input id="tl-rpe" type="number" min="1" max="10" placeholder="cth. 6"/></div>
+    <div class="field"><label>Catatan (opsional)</label><input id="tl-notes" type="text" placeholder="Catatan tambahan"/></div>
+    <div id="tl-err" class="err" style="display:none;"></div>
+    <button class="btn" onclick="submitTrainingSession('${athleteId}')">Simpan Sesi</button>
+  `;
+}
+async function submitTrainingSession(athleteId){
+  const errBox = document.getElementById("tl-err");
+  const dateVal = document.getElementById("tl-date").value;
+  const type = document.getElementById("tl-type").value.trim();
+  const duration = document.getElementById("tl-duration").value;
+  const rpe = document.getElementById("tl-rpe").value;
+  const notes = document.getElementById("tl-notes").value;
+  if(!dateVal || !type || duration==="" || rpe===""){ errBox.style.display="block"; errBox.textContent="Lengkapi tanggal, jenis sesi, durasi, dan RPE."; return; }
+  errBox.style.display="none";
+  const load = Number(duration) * Number(rpe);
+  const { error } = await sb.from("training_sessions").insert({
+    athlete_id: athleteId, session_date: dateVal, session_type: type,
+    duration_minutes: Number(duration), session_rpe: Number(rpe), session_load: load, notes: notes || null
+  });
+  if(error){ errBox.style.display="block"; errBox.textContent="Gagal menyimpan: " + error.message; return; }
+  await refreshTrainingLoad();
+  closeModal(); render();
+  showToast(`Sesi tersimpan · Load ${load}`);
+}
+
+/* ---------------- GOALS & KPI ---------------- */
+function athleteGoalsSection(a){
+  const rows = loadDB(DB_KEYS.goals).filter(x=>x.athleteId===a.id).sort((x,y)=>(y.deadline||0)-(x.deadline||0));
+  return `
+    <button class="btn" onclick="openModal('addGoal','${a.id}')">+ Tambah Goal</button>
+    ${rows.length===0 ? `<div class="chart-empty" style="margin-top:14px;">Belum ada goal untuk atlet ini.</div>` : rows.map(g=>{
+      const pct = goalProgressPct(g);
+      return `
+        <div class="chart-card">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
+            <b style="font-size:13.5px;">${g.name}</b>
+            <span class="badge" style="background:${goalStatusColor(g.status)}">${g.status}</span>
+          </div>
+          <div class="helper" style="margin:0 0 8px;">${g.category} ${g.deadline?`· Target ${new Date(g.deadline).toLocaleDateString("id-ID",{day:"2-digit",month:"short",year:"numeric"})}`:""}</div>
+          <div style="display:flex;justify-content:space-between;font-size:11.5px;color:var(--muted);margin-bottom:4px;">
+            <span>Baseline: ${g.baseline??'-'} ${g.unit}</span>
+            <span>Current: ${g.current??'-'} ${g.unit}</span>
+            <span>Target: ${g.target??'-'} ${g.unit}</span>
+          </div>
+          <div style="background:var(--border);border-radius:20px;height:8px;overflow:hidden;">
+            <div style="width:${pct??0}%;background:var(--turquoise);height:100%;"></div>
+          </div>
+          <div style="text-align:right;font-size:11px;color:var(--muted);margin-top:4px;">${pct!=null?pct+"%":"Data belum lengkap"}</div>
+        </div>
+      `;
+    }).join("")}
+  `;
+}
+function modalAddGoal(athleteId){
+  return `
+    <div class="modal-head"><h3>Tambah Goal</h3><button class="close-x" onclick="closeModal()">✕</button></div>
+    <div class="field"><label>Nama goal</label><input id="gl-name" type="text" placeholder="cth. Sprint 30m"/></div>
+    <div class="field"><label>Kategori</label><input id="gl-category" type="text" placeholder="cth. Speed"/></div>
+    <div class="field"><label>Unit</label><input id="gl-unit" type="text" placeholder="cth. detik, kg, cm"/></div>
+    <div class="field"><label>Arah metric</label>
+      <select id="gl-direction"><option value="higher">Semakin tinggi semakin baik</option><option value="lower">Semakin rendah semakin baik</option></select>
+    </div>
+    <div class="field"><label>Baseline</label><input id="gl-baseline" type="number" step="0.01"/></div>
+    <div class="field"><label>Current value</label><input id="gl-current" type="number" step="0.01"/></div>
+    <div class="field"><label>Target</label><input id="gl-target" type="number" step="0.01"/></div>
+    <div class="field"><label>Deadline</label><input id="gl-deadline" type="date"/></div>
+    <div class="field"><label>Priority</label>
+      <select id="gl-priority"><option>Low</option><option selected>Medium</option><option>High</option></select>
+    </div>
+    <div class="field"><label>Status</label>
+      <select id="gl-status">
+        <option>Not Started</option><option selected>In Progress</option><option>On Track</option><option>At Risk</option><option>Completed</option>
+      </select>
+    </div>
+    <div class="field"><label>Catatan (opsional)</label><input id="gl-notes" type="text"/></div>
+    <div id="gl-err" class="err" style="display:none;"></div>
+    <button class="btn" onclick="submitGoal('${athleteId}')">Simpan Goal</button>
+  `;
+}
+async function submitGoal(athleteId){
+  const errBox = document.getElementById("gl-err");
+  const name = document.getElementById("gl-name").value.trim();
+  if(!name){ errBox.style.display="block"; errBox.textContent="Nama goal wajib diisi."; return; }
+  errBox.style.display="none";
+  const val = id => { const v = document.getElementById(id).value; return v===""?null:Number(v); };
+  const deadline = document.getElementById("gl-deadline").value;
+  const { error } = await sb.from("athlete_goals").insert({
+    athlete_id: athleteId, goal_name: name,
+    category: document.getElementById("gl-category").value.trim() || "General",
+    unit: document.getElementById("gl-unit").value.trim(),
+    higher_is_better: document.getElementById("gl-direction").value === "higher",
+    baseline: val("gl-baseline"), current_value: val("gl-current"), target: val("gl-target"),
+    deadline: deadline || null,
+    priority: document.getElementById("gl-priority").value,
+    status: GOAL_STATUS_UI_TO_DB[document.getElementById("gl-status").value],
+    notes: document.getElementById("gl-notes").value || null
+  });
+  if(error){ errBox.style.display="block"; errBox.textContent="Gagal menyimpan: " + error.message; return; }
+  await refreshGoals();
+  closeModal(); render();
+  showToast("Goal tersimpan");
+}
+
 function athletePhotoSection(a){
   return `
     <div class="chart-card">
@@ -1240,6 +2747,10 @@ function exportBackup(){
   const data = {
     athletes: cache.athletes, tests: cache.tests,
     assessments: cache.assessments, injuries: cache.injuries,
+    readiness: cache.readiness, loads: cache.loads, goals: cache.goals,
+    batteries: cache.batteries, batterySessions: cache.batterySessions,
+    rehabLogs: cache.rehabLogs, asymmetry: cache.asymmetry,
+    notes: cache.notes, competitions: cache.competitions, competitionResults: cache.competitionResults,
     exportedAt: new Date().toISOString()
   };
   const blob = new Blob([JSON.stringify(data,null,2)], {type:"application/json"});
@@ -1720,6 +3231,18 @@ function renderModal(){
   if(state.modal.name==="addTest") modal.innerHTML = modalAddTest();
   if(state.modal.name==="addAthlete") modal.innerHTML = modalAddAthlete();
   if(state.modal.name==="addAssessment") modal.innerHTML = modalAddAssessment(state.modal.payload);
+  if(state.modal.name==="addReadiness") modal.innerHTML = modalAddReadiness(state.modal.payload);
+  if(state.modal.name==="addTrainingSession") modal.innerHTML = modalAddTrainingSession(state.modal.payload);
+  if(state.modal.name==="addGoal") modal.innerHTML = modalAddGoal(state.modal.payload);
+  if(state.modal.name==="createBattery") modal.innerHTML = modalCreateBattery();
+  if(state.modal.name==="runBattery") modal.innerHTML = modalRunBattery(state.modal.payload);
+  if(state.modal.name==="injuryDetail") modal.innerHTML = modalInjuryDetail(state.modal.payload);
+  if(state.modal.name==="addRehabLog") modal.innerHTML = modalAddRehabLog(state.modal.payload);
+  if(state.modal.name==="addAsymmetry") modal.innerHTML = modalAddAsymmetry(state.modal.payload);
+  if(state.modal.name==="addNote") modal.innerHTML = modalAddNote(state.modal.payload);
+  if(state.modal.name==="addCompetition") modal.innerHTML = modalAddCompetition();
+  if(state.modal.name==="addParticipant") modal.innerHTML = modalAddParticipant(state.modal.payload);
+  if(state.modal.name==="importAthletes") modal.innerHTML = modalImportAthletes();
   if(state.modal.name==="backup") modal.innerHTML = modalBackup();
   if(state.modal.name==="addMasterplan") modal.innerHTML = modalAddMasterplan();
   if(state.modal.name==="addWeeklyLog") modal.innerHTML = modalAddWeeklyLog(state.modal.payload);
