@@ -346,7 +346,8 @@ function mapAthleteRow(a){
     id: a.id, code: a.athlete_code, name: a.full_name, photo: a.profile_photo_url,
     sport: a.sport || "-", position: a.position || "-", gender: a.gender || "L",
     age, height: a.height_cm, weight: a.weight_kg,
-    status: STATUS_DB_TO_UI[a.status] || "Aktif"
+    status: STATUS_DB_TO_UI[a.status] || "Aktif",
+    userId: a.user_id || null
   };
 }
 
@@ -840,10 +841,27 @@ let state = {
   calendarMonth: new Date(new Date().getFullYear(), new Date().getMonth(), 1).getTime(),
   calendarSelectedDay: null,
   calendarFilters:{ athleteId:"", type:"" },
-  competitionId:null
+  competitionId:null,
+  adminSection:"roles", auditFilter:""
 };
 let chartInstances = {};
 function destroyChart(id){ if(chartInstances[id]){ chartInstances[id].destroy(); delete chartInstances[id]; } }
+
+/* ---------------- ROLE & PERMISSION (frontend gating) ----------------
+   Ini HANYA untuk UI (sembunyikan tombol yang tidak relevan). Keamanan
+   sesungguhnya ditegakkan oleh RLS policy di database (lihat
+   migration_phase4.sql) — jadi walau frontend ini dilewati, akses tetap
+   dibatasi di level database. */
+const ROLE_LABELS = {
+  super_admin:"Super Admin", admin:"Admin", head_coach:"Head Coach",
+  performance_coach:"Performance Coach", sc_coach:"S&C Coach",
+  physiotherapist:"Physiotherapist", medical:"Medical", athlete:"Athlete", viewer:"Viewer"
+};
+function currentRole(){ return cache.profile ? cache.profile.role : "viewer"; }
+function isAdmin(){ return ["super_admin","admin"].includes(currentRole()); }
+function isMedical(){ return ["physiotherapist","medical"].includes(currentRole()); }
+function isCoach(){ return ["head_coach","performance_coach","sc_coach"].includes(currentRole()); }
+function isStaff(){ return isAdmin() || isMedical() || isCoach(); }
 
 function render(){
   const root = document.getElementById("app");
@@ -856,15 +874,16 @@ function render(){
         <p>Performance App</p>
       </div>
       <div class="user-chip">
-        <span class="role-dot"></span>${role}
+        <span class="role-dot"></span>${ROLE_LABELS[role] || role}
         <button class="logout-btn" onclick="handleLogout()">Keluar</button>
       </div>
+      ${isAdmin() ? `<button class="backup-btn" onclick="openAdminPanel()" title="Admin">⚙</button>` : ""}
       <button class="backup-btn" onclick="openModal('backup')">⬇</button>
     </header>
     <main id="main"></main>
-    ${state.tab === "tests" && state.testsSection==='categories' ? `<button class="fab" onclick="openModal('addTest')">+</button>` : ""}
-    ${state.tab === "tests" && state.testsSection==='battery' ? `<button class="fab" onclick="openModal('createBattery')">+</button>` : ""}
-    ${state.tab === "masterplan" && !state.mpId ? `<button class="fab" onclick="openModal('addMasterplan')">+</button>` : ""}
+    ${state.tab === "tests" && state.testsSection==='categories' && isStaff() ? `<button class="fab" onclick="openModal('addTest')">+</button>` : ""}
+    ${state.tab === "tests" && state.testsSection==='battery' && isStaff() ? `<button class="fab" onclick="openModal('createBattery')">+</button>` : ""}
+    ${state.tab === "masterplan" && !state.mpId && isStaff() ? `<button class="fab" onclick="openModal('addMasterplan')">+</button>` : ""}
     <nav class="bottom">
       ${navBtn("dashboard","📊","Dashboard")}
       ${navBtn("athletes","👤","Atlet")}
@@ -900,6 +919,7 @@ function renderMain(){
   if(state.tab === "compare") main.innerHTML = viewComparison();
   if(state.tab === "calendar") main.innerHTML = viewCalendar();
   if(state.tab === "competitions") main.innerHTML = state.competitionId ? viewCompetitionDetail() : viewCompetitionList();
+  if(state.tab === "admin") main.innerHTML = viewAdminPanel();
 
   if(state.tab === "dashboard") drawDashboardChart();
   if(state.tab === "compare") drawComparisonChart();
@@ -1158,7 +1178,7 @@ function viewCompetitionList(){
   const comps = loadDB(DB_KEYS.competitions).sort((a,b)=>b.date-a.date);
   return `
     <h2 class="page-title">Kompetisi</h2>
-    <button class="btn" onclick="openModal('addCompetition')">+ Tambah Kompetisi</button>
+    ${isStaff() ? `<button class="btn" onclick="openModal('addCompetition')">+ Tambah Kompetisi</button>` : ""}
     ${comps.length===0 ? `<div class="chart-empty" style="margin-top:14px;">Belum ada data kompetisi.</div>` : `
       <div class="card-list" style="margin-top:14px;">
         ${comps.map(c=>`
@@ -1188,7 +1208,7 @@ function viewCompetitionDetail(){
     ${c.result ? `<p class="helper" style="margin:10px 0 0;"><b>Hasil:</b> ${c.result}</p>` : ""}
 
     <h2 class="page-title" style="margin-top:16px;">Partisipasi Atlet</h2>
-    <button class="btn" onclick="openModal('addParticipant','${c.id}')">+ Tambah Partisipasi Atlet</button>
+    ${isStaff() ? `<button class="btn" onclick="openModal('addParticipant','${c.id}')">+ Tambah Partisipasi Atlet</button>` : ""}
     ${results.length===0 ? `<div class="chart-empty" style="margin-top:10px;">Belum ada atlet yang dicatat untuk kompetisi ini.</div>` : results.map(r=>{
       const ath = athletes.find(a=>a.id===r.athleteId);
       return `<div class="history-row">
@@ -1354,6 +1374,80 @@ function viewCalendar(){
   `;
 }
 
+/* ---------------- ADMIN PANEL (role management + audit log) ---------------- */
+let allProfilesCache = [];
+let auditLogsCache = [];
+function openAdminPanel(){ state.tab = "admin"; render(); loadAdminData(); }
+function backFromAdmin(){ state.tab = "dashboard"; render(); }
+function setAdminSection(s){ state.adminSection = s; render(); if(s==="audit") loadAuditLogs(); }
+async function loadAdminData(){
+  const { data, error } = await sb.from("profiles").select("*").order("full_name",{ascending:true});
+  if(!error) allProfilesCache = data || [];
+  render();
+  if(state.adminSection === "audit") loadAuditLogs();
+}
+async function loadAuditLogs(){
+  let q = sb.from("audit_logs").select("*").order("created_at",{ascending:false}).limit(100);
+  if(state.auditFilter) q = q.eq("table_name", state.auditFilter);
+  const { data, error } = await q;
+  if(error){ showToast("Gagal memuat audit log (perlu role Admin)"); return; }
+  auditLogsCache = data || [];
+  render();
+}
+async function submitRoleChange(userId, newRole){
+  const { error } = await sb.from("profiles").update({ role: newRole }).eq("id", userId);
+  if(error){ showToast("Gagal mengubah role: " + error.message); return; }
+  showToast("Role diperbarui");
+  await loadAdminData();
+  if(userId === cache.profile.id){ cache.profile.role = newRole; render(); }
+}
+function viewAdminPanel(){
+  if(!isAdmin()) return `<div class="empty"><b>Akses ditolak</b>Halaman ini hanya untuk role Admin/Super Admin.</div>`;
+  return `
+    <div class="back-row" onclick="backFromAdmin()"><span class="arrow">‹</span><span class="label">Kembali</span></div>
+    <h2 class="page-title">Admin Panel</h2>
+    <div class="section-tabs">
+      <button class="${state.adminSection==='roles'?'active':''}" onclick="setAdminSection('roles')">Role & Permission</button>
+      <button class="${state.adminSection==='audit'?'active':''}" onclick="setAdminSection('audit')">Audit Log</button>
+    </div>
+    ${state.adminSection==='roles' ? viewRoleManagement() : viewAuditLog()}
+  `;
+}
+function viewRoleManagement(){
+  return `
+    <p class="helper" style="margin-bottom:10px;">Ubah role akun user. Perubahan berlaku langsung — akses tiap role ditegakkan lewat RLS di database, bukan cuma tampilan di sini.</p>
+    ${allProfilesCache.length===0 ? `<div class="chart-empty">Memuat data user...</div>` : allProfilesCache.map(p=>`
+      <div class="history-row">
+        <div class="h-left"><b>${p.full_name || '(tanpa nama)'}</b><span>${p.id.slice(0,8)}...</span></div>
+        <select onchange="submitRoleChange('${p.id}', this.value)">
+          ${Object.entries(ROLE_LABELS).map(([val,label])=>`<option value="${val}" ${p.role===val?'selected':''}>${label}</option>`).join("")}
+        </select>
+      </div>
+    `).join("")}
+    <p class="helper" style="margin-top:14px;">Untuk menautkan akun atlet ke profil atletnya (supaya atlet bisa login dan lihat data sendiri), buka detail atlet → Ringkasan → "Tautkan Akun Login" (khusus Admin).</p>
+  `;
+}
+function viewAuditLog(){
+  const tableOptions = ["athletes","injuries","athlete_goals","readiness_logs","training_sessions","rehab_logs","athlete_notes","competitions","competition_results"];
+  return `
+    <div class="filter-row">
+      <select onchange="state.auditFilter=this.value; loadAuditLogs();">
+        <option value="">Semua tabel</option>
+        ${tableOptions.map(t=>`<option value="${t}" ${state.auditFilter===t?'selected':''}>${t}</option>`).join("")}
+      </select>
+    </div>
+    ${auditLogsCache.length===0 ? `<div class="chart-empty">Belum ada log, atau sedang dimuat.</div>` : auditLogsCache.map(l=>`
+      <div class="history-row" style="align-items:flex-start;">
+        <div class="h-left">
+          <b>${l.table_name} · ${l.action}</b>
+          <span>${l.user_email || 'system'} · ${new Date(l.created_at).toLocaleString("id-ID")}</span>
+        </div>
+        <span class="badge" style="background:${l.action==='DELETE'?'#E24B4A':l.action==='UPDATE'?'#EF9F27':'#1D9E75'}">${l.action}</span>
+      </div>
+    `).join("")}
+  `;
+}
+
 /* ---------------- KATEGORI TES / TEST BATTERY ---------------- */
 function setTestsSection(s){ state.testsSection = s; render(); }
 function viewTests(){
@@ -1447,7 +1541,7 @@ function viewTestBattery(){
   const athletes = loadDB(DB_KEYS.athletes);
   const sessions = loadDB(DB_KEYS.batterySessions);
   return `
-    <button class="btn" onclick="openModal('createBattery')">+ Buat Test Battery</button>
+    ${isStaff() ? `<button class="btn" onclick="openModal('createBattery')">+ Buat Test Battery</button>` : ""}
     ${batteries.length===0 ? `<div class="chart-empty" style="margin-top:14px;">Belum ada test battery. Buat dulu battery berisi beberapa tes (contoh: Speed & Power Battery).</div>` : batteries.map(b=>{
       const bSessions = sessions.filter(s=>s.batteryId===b.id).sort((x,y)=>y.date-x.date);
       return `
@@ -1457,7 +1551,7 @@ function viewTestBattery(){
             <span class="helper" style="margin:0;">${b.testIds.length} tes</span>
           </div>
           <p class="helper" style="margin:4px 0 10px;">${b.testIds.map(id=>{ const t=cache.tests.find(x=>x.id===id); return t?t.name:"?"; }).join(", ")}</p>
-          <button class="btn" onclick="openModal('runBattery','${b.id}')">Jalankan untuk Atlet</button>
+          ${isStaff() ? `<button class="btn" onclick="openModal('runBattery','${b.id}')">Jalankan untuk Atlet</button>` : ""}
           ${bSessions.length===0 ? "" : `
             <div style="margin-top:10px;">
               ${bSessions.slice(0,5).map(s=>{
@@ -1591,8 +1685,8 @@ function viewAthleteList(){
         <span class="profile-chevron">›</span>
       </div>
     `).join("")}
-    <button class="btn ghost" style="margin-top:10px;" onclick="openModal('addAthlete')">+ Tambah Atlet Baru</button>
-    <button class="btn ghost" style="margin-top:8px;" onclick="openModal('importAthletes')">Import Atlet dari CSV</button>
+    ${isStaff() ? `<button class="btn ghost" style="margin-top:10px;" onclick="openModal('addAthlete')">+ Tambah Atlet Baru</button>
+    <button class="btn ghost" style="margin-top:8px;" onclick="openModal('importAthletes')">Import Atlet dari CSV</button>` : ""}
   `;
 }
 function openAthlete(id){ state.tab="athletes"; state.athleteId=id; state.athleteSection="overview"; state.selectedPart=null; render(); }
@@ -1879,8 +1973,26 @@ function athleteOverview(a){
     <div class="dist-row" style="display:flex;gap:6px;margin-bottom:18px;">
       ${Object.entries(dist).map(([k,v])=>`<div style="flex:1;background:${catColor(k)};border-radius:10px;padding:10px 6px;text-align:center;color:white;"><div style="font-size:17px;font-weight:700;">${v}</div><div style="font-size:9.5px;">${k}</div></div>`).join("")}
     </div>
-    <button class="btn" onclick="openModal('addAssessment', '${a.id}')">+ Input Hasil Tes Baru</button>
+    ${isStaff() ? `<button class="btn" onclick="openModal('addAssessment', '${a.id}')">+ Input Hasil Tes Baru</button>` : ""}
+    ${isAdmin() ? `
+      <div class="field" style="margin-top:14px;">
+        <label>Tautkan Akun Login (User ID dari Supabase Auth) — untuk akses login atlet</label>
+        <div style="display:flex;gap:6px;">
+          <input id="link-userid" placeholder="uuid user_id" value="${a.userId||''}" style="flex:1;"/>
+          <button class="btn ghost" style="width:auto;padding:0 14px;" onclick="submitLinkAthleteAccount('${a.id}')">Simpan</button>
+        </div>
+        <p class="helper" style="margin-top:4px;">${a.userId ? 'Sudah tertaut ke akun user ID di atas.' : 'Belum tertaut ke akun manapun.'}</p>
+      </div>
+    ` : ""}
   `;
+}
+async function submitLinkAthleteAccount(athleteId){
+  const val = document.getElementById("link-userid").value.trim();
+  const { error } = await sb.from("athletes").update({ user_id: val || null }).eq("id", athleteId);
+  if(error){ showToast("Gagal menautkan akun: " + error.message); return; }
+  await refreshAthletes();
+  render();
+  showToast(val ? "Akun berhasil ditautkan" : "Tautan akun dihapus");
 }
 
 function athletePerformanceSection(a){
@@ -2332,7 +2444,7 @@ function athleteNotesSection(a){
   const rows = loadDB(DB_KEYS.notes).filter(x=>x.athleteId===a.id).sort((x,y)=>y.date-x.date);
   const catColorMap = {Performance:"#378ADD", Training:"#20B2AA", Behavior:"#8B6FD1", Recovery:"#1D9E75", Injury:"#E24B4A", Competition:"#EF9F27", General:"#5B6664"};
   return `
-    <button class="btn" onclick="openModal('addNote','${a.id}')">+ Tambah Catatan</button>
+    ${isStaff() ? `<button class="btn" onclick="openModal('addNote','${a.id}')">+ Tambah Catatan</button>` : ""}
     ${rows.length===0 ? `<div class="chart-empty" style="margin-top:14px;">Belum ada catatan coach.</div>` : rows.map(n=>`
       <div class="history-row" style="align-items:flex-start;">
         <div class="h-left">
@@ -2491,7 +2603,7 @@ function athleteLoadSection(a){
       <div class="stat-card"><div class="label">ACWR</div><div class="value" style="color:${zone.color}">${ratio!=null?ratio.toFixed(2):'-'}</div></div>
     </div>
     <div class="helper" style="margin:-6px 0 14px;color:${zone.color};font-weight:700;">${zone.label}</div>
-    <button class="btn" onclick="openModal('addTrainingSession','${a.id}')">+ Catat Sesi Latihan</button>
+    ${isStaff() ? `<button class="btn" onclick="openModal('addTrainingSession','${a.id}')">+ Catat Sesi Latihan</button>` : ""}
     <div class="chart-card" style="margin-top:16px;">
       <h3>Beban Latihan Harian (30 Hari Terakhir)</h3>
       ${rows.length===0 ? `<div class="chart-empty">Belum ada data training load.</div>` : `<canvas id="chart-load" height="180"></canvas>`}
@@ -2560,7 +2672,7 @@ async function submitTrainingSession(athleteId){
 function athleteGoalsSection(a){
   const rows = loadDB(DB_KEYS.goals).filter(x=>x.athleteId===a.id).sort((x,y)=>(y.deadline||0)-(x.deadline||0));
   return `
-    <button class="btn" onclick="openModal('addGoal','${a.id}')">+ Tambah Goal</button>
+    ${isStaff() ? `<button class="btn" onclick="openModal('addGoal','${a.id}')">+ Tambah Goal</button>` : ""}
     ${rows.length===0 ? `<div class="chart-empty" style="margin-top:14px;">Belum ada goal untuk atlet ini.</div>` : rows.map(g=>{
       const pct = goalProgressPct(g);
       return `
@@ -3309,7 +3421,7 @@ async function handleAuthSubmit(){
 
 async function handleLogout(){
   await sb.auth.signOut();
-  cache = { athletes:[], tests:[], assessments:[], injuries:[], testCategories:[], bodyParts:[], profile:null };
+  cache = { athletes:[], tests:[], assessments:[], injuries:[], testCategories:[], bodyParts:[], profile:null, readiness:[], loads:[], goals:[], batteries:[], batterySessions:[], rehabLogs:[], asymmetry:[], notes:[], competitions:[], competitionResults:[] };
   renderAuthScreen();
 }
 
