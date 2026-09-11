@@ -309,9 +309,9 @@ const BUCKET = "athlete-assets";
    loadDB(DB_KEYS.athletes) dsb) tidak perlu diubah satu per satu —
    loadDB() sekarang membaca dari cache in-memory yang diisi lewat
    Supabase, bukan dari localStorage. */
-const DB_KEYS = { athletes:"athletes", tests:"tests", assessments:"assessments", injuries:"injuries", readiness:"readiness", loads:"loads", goals:"goals", batteries:"batteries", batterySessions:"batterySessions", rehabLogs:"rehabLogs", asymmetry:"asymmetry", notes:"notes", competitions:"competitions", competitionResults:"competitionResults" };
+const DB_KEYS = { athletes:"athletes", tests:"tests", assessments:"assessments", injuries:"injuries", readiness:"readiness", loads:"loads", goals:"goals", batteries:"batteries", batterySessions:"batterySessions", rehabLogs:"rehabLogs", asymmetry:"asymmetry", notes:"notes", competitions:"competitions", competitionResults:"competitionResults", masterplans:"masterplans" };
 
-let cache = { athletes:[], tests:[], assessments:[], injuries:[], testCategories:[], bodyParts:[], profile:null, readiness:[], loads:[], goals:[], batteries:[], batterySessions:[], rehabLogs:[], asymmetry:[], notes:[], competitions:[], competitionResults:[] };
+let cache = { athletes:[], tests:[], assessments:[], injuries:[], testCategories:[], bodyParts:[], profile:null, readiness:[], loads:[], goals:[], batteries:[], batterySessions:[], rehabLogs:[], asymmetry:[], notes:[], competitions:[], competitionResults:[], masterplans:[] };
 
 function loadDB(key){ return cache[key] || []; }
 function uid(){ return Date.now().toString(36) + Math.random().toString(36).slice(2,7); }
@@ -481,7 +481,7 @@ async function refreshAthletes(){
 
 async function refreshAssessments(){
   const { data, error } = await sb.from("performance_results")
-    .select("id, value, unit, athlete_id, test_id, assessments(assessment_date, battery_session_id)")
+    .select("id, value, unit, athlete_id, test_id, assessments(id, assessment_date, battery_session_id)")
     .order("created_at", {ascending:false});
   if(error){ showToast("Gagal memuat riwayat tes"); return; }
   cache.assessments = (data||[]).map(r => {
@@ -489,6 +489,7 @@ async function refreshAssessments(){
     const category = test ? computeCategory(test, r.value) : "Average";
     return {
       id: r.id, athleteId: r.athlete_id, testId: r.test_id,
+      assessmentId: r.assessments ? r.assessments.id : null,
       date: r.assessments ? new Date(r.assessments.assessment_date).getTime() : Date.now(),
       batterySessionId: r.assessments ? r.assessments.battery_session_id : null,
       rawScore: Number(r.value), category
@@ -1983,8 +1984,25 @@ function athleteOverview(a){
         </div>
         <p class="helper" style="margin-top:4px;">${a.userId ? 'Sudah tertaut ke akun user ID di atas.' : 'Belum tertaut ke akun manapun.'}</p>
       </div>
+      <span class="delete-link" style="display:block;margin-top:18px;" onclick="deleteAthlete('${a.id}','${a.name.replace(/'/g,"\\'")}')">🗑 Hapus Atlet Ini (beserta seluruh riwayatnya)</span>
     ` : ""}
   `;
+}
+async function deleteAthlete(athleteId, athleteName){
+  if(!confirm(`Hapus atlet "${athleteName}" beserta SELURUH riwayat datanya (hasil tes, cedera, readiness, training load, goals, dll)? Tindakan ini tidak dapat dibatalkan.`)) return;
+  // hapus dulu tabel yang mungkin belum ON DELETE CASCADE ke athletes,
+  // baru hapus baris athletes-nya (sisanya ter-cascade otomatis lewat FK).
+  await sb.from("performance_results").delete().eq("athlete_id", athleteId);
+  await sb.from("assessments").delete().eq("athlete_id", athleteId);
+  await sb.from("athlete_files").delete().eq("athlete_id", athleteId);
+  const { error } = await sb.from("athletes").delete().eq("id", athleteId);
+  if(error){ showToast("Gagal menghapus atlet: " + error.message); return; }
+  await refreshAthletes();
+  await refreshAssessments();
+  await refreshInjuries();
+  state.athleteId = null;
+  setTab("athletes");
+  showToast(`Atlet "${athleteName}" dan seluruh riwayatnya dihapus`);
 }
 async function submitLinkAthleteAccount(athleteId){
   const val = document.getElementById("link-userid").value.trim();
@@ -2660,7 +2678,7 @@ async function submitTrainingSession(athleteId){
   const load = Number(duration) * Number(rpe);
   const { error } = await sb.from("training_sessions").insert({
     athlete_id: athleteId, session_date: dateVal, session_type: type,
-    duration_minutes: Number(duration), session_rpe: Number(rpe), session_load: load, notes: notes || null
+    duration_minutes: Number(duration), session_rpe: Number(rpe), notes: notes || null
   });
   if(error){ errBox.style.display="block"; errBox.textContent="Gagal menyimpan: " + error.message; return; }
   await refreshTrainingLoad();
@@ -2840,10 +2858,22 @@ function viewHistory(){
             <span>${dateStr} · ${a.rawScore} ${t?t.unit:""}</span>
           </div>
           <span class="badge" style="background:${catColor(a.category)}">${a.category}</span>
+          ${isStaff() ? `<span class="delete-link" style="margin-left:8px;" onclick="deleteHistoryEntry('${a.id}','${a.assessmentId||''}')">🗑</span>` : ""}
         </div>
       `;
     }).join("")}
   `;
+}
+async function deleteHistoryEntry(perfResultId, assessmentId){
+  if(!confirm("Hapus hasil tes ini? Tindakan tidak dapat dibatalkan.")) return;
+  const { error: err1 } = await sb.from("performance_results").delete().eq("id", perfResultId);
+  if(err1){ showToast("Gagal menghapus: " + err1.message); return; }
+  if(assessmentId){
+    await sb.from("assessments").delete().eq("id", assessmentId);
+  }
+  await refreshAssessments();
+  render();
+  showToast("Hasil tes dihapus");
 }
 
 /* ---------------- CADANGAN DATA ---------------- */
