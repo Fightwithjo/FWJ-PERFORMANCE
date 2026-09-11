@@ -1,6 +1,6 @@
 // sw.js — Service Worker untuk Fight With Jo - Performance App
 
-const CACHE_NAME = "fwj-cache-v2"; // dinaikkan dari v1 -> v2 karena index.html diupdate
+const CACHE_NAME = "fwj-cache-v3"; // dinaikkan dari v2 -> v3 karena index.html diupdate
 const OFFLINE_URL = "./index.html";
 
 // File inti yang di-cache saat instalasi (app shell)
