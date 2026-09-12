@@ -387,11 +387,29 @@ function mapReadinessRow(r){
   };
 }
 function mapTrainingLoadRow(t){
+  const duration = Number(t.duration_minutes)||0;
+  const rpe = Number(t.session_rpe)||0;
+  const load = Number(t.session_load) || (duration * rpe);
+  let rawStrength = [];
+  if(t.strength_data){
+    try{ rawStrength = Array.isArray(t.strength_data) ? t.strength_data : JSON.parse(t.strength_data); }catch(e){ rawStrength = []; }
+  }
+  const strengthData = (rawStrength||[]).map(x=>{
+    const sets = Number(x.sets)||0, reps = Number(x.reps)||0, ld = Number(x.load)||0;
+    return {
+      exercise: x.exercise || "", sets, reps, load: ld,
+      pct1rm: (x.pct1rm!=null && x.pct1rm!=="") ? Number(x.pct1rm) : null,
+      rir: (x.rir!=null && x.rir!=="") ? Number(x.rir) : null,
+      exerciseRpe: (x.exerciseRpe!=null && x.exerciseRpe!=="") ? Number(x.exerciseRpe) : null,
+      volumeLoad: sets * reps * ld
+    };
+  });
+  const volumeLoad = strengthData.reduce((s,x)=>s+x.volumeLoad,0);
   return {
     id: t.id, athleteId: t.athlete_id, date: new Date(t.session_date).getTime(),
-    sessionType: t.session_type, duration: Number(t.duration_minutes)||0,
-    rpe: Number(t.session_rpe)||0, load: Number(t.session_load)||(Number(t.duration_minutes)||0)*(Number(t.session_rpe)||0),
-    notes: t.notes || ""
+    sessionType: t.session_type, trainingType: t.session_type, duration, rpe, load,
+    notes: t.notes || "", strengthData, volumeLoad,
+    category: trainingCategory(t.session_type)
   };
 }
 const GOAL_STATUS_DB_TO_UI = { not_started:"Not Started", in_progress:"In Progress", on_track:"On Track", at_risk:"At Risk", completed:"Completed" };
@@ -641,8 +659,37 @@ function readinessCategory(score){
 function sumLoadInRange(loads, fromMs, toMs){
   return loads.filter(l=>l.date>=fromMs && l.date<=toMs).reduce((s,l)=>s+l.load,0);
 }
-// Acute:Chronic Workload Ratio — acute = rata-rata beban 7 hari terakhir,
-// chronic = rata-rata beban mingguan 28 hari terakhir.
+
+/* ---------------- TRAINING LOAD — TYPES & KATEGORI ---------------- */
+const TRAINING_TYPES = [
+  {value:"Muay Thai", group:"COMBAT"}, {value:"Kickboxing", group:"COMBAT"},
+  {value:"Sparring", group:"COMBAT"}, {value:"Pad Work", group:"COMBAT"},
+  {value:"Heavy Bag", group:"COMBAT"}, {value:"Technical Training", group:"COMBAT"},
+  {value:"Running", group:"CONDITIONING"}, {value:"Aerobic Conditioning", group:"CONDITIONING"},
+  {value:"Anaerobic Conditioning", group:"CONDITIONING"},
+  {value:"SAQ", group:"SAQ"},
+  {value:"Strength Training", group:"STRENGTH"}, {value:"Power Training", group:"STRENGTH"},
+  {value:"Functional Training", group:"STRENGTH"}, {value:"Hypertrophy", group:"STRENGTH"},
+  {value:"Max Strength", group:"STRENGTH"}, {value:"Strength Endurance", group:"STRENGTH"},
+  {value:"Mobility", group:"RECOVERY"}, {value:"Recovery", group:"RECOVERY"},
+  {value:"Other", group:"OTHER"}
+];
+const TRAINING_GROUP_LABELS = { ALL:"Semua", COMBAT:"Combat", STRENGTH:"Strength", CONDITIONING:"Conditioning", SAQ:"SAQ", RECOVERY:"Recovery", OTHER:"Other" };
+const RPE_SCALE = {0:"Rest",1:"Very Easy",2:"Easy",3:"Light",4:"Moderate",5:"Somewhat Hard",6:"Hard",7:"Very Hard",8:"Very Hard",9:"Extremely Hard",10:"Maximum"};
+function trainingCategory(type){ const t = TRAINING_TYPES.find(x=>x.value===type); return t ? t.group : "OTHER"; }
+function isStrengthCategory(type){ return trainingCategory(type)==="STRENGTH"; }
+
+/* ---------------- ACUTE : CHRONIC WORKLOAD RATIO (ACWR) ----------------
+   Acute Load  = total session load 7 hari terakhir (rolling window)
+   Chronic Load = rata-rata beban mingguan selama 28 hari terakhir
+   ACWR = Acute Load ÷ Chronic Load
+   Catatan penting: ini metric workload monitoring, BUKAN alat diagnosis cedera. */
+function chronicBaselineInfo(loads, refDate){
+  if(!loads.length) return { sufficient:false, spanDays:0 };
+  const earliest = Math.min(...loads.map(l=>l.date));
+  const spanDays = Math.floor((refDate - earliest)/86400000) + 1;
+  return { sufficient: spanDays >= 28, spanDays };
+}
 function computeACWR(loads, refDate){
   const day = 86400000;
   const acuteFrom = refDate - 6*day;
@@ -650,15 +697,110 @@ function computeACWR(loads, refDate){
   const acuteLoad = sumLoadInRange(loads, acuteFrom, refDate);
   const chronicLoadTotal = sumLoadInRange(loads, chronicFrom, refDate);
   const chronicWeeklyAvg = chronicLoadTotal / 4;
-  const ratio = chronicWeeklyAvg > 0 ? (acuteLoad / chronicWeeklyAvg) : null;
-  return { acuteLoad, chronicWeeklyAvg, ratio };
+  const baseline = chronicBaselineInfo(loads, refDate);
+  let ratio = null;
+  if(baseline.sufficient && chronicWeeklyAvg > 0){
+    const r = acuteLoad / chronicWeeklyAvg;
+    if(isFinite(r)) ratio = r;
+  }
+  return { acuteLoad, chronicWeeklyAvg, ratio, sufficient: baseline.sufficient, spanDays: baseline.spanDays };
 }
+// Kategori ACWR untuk WORKLOAD MONITORING (bukan diagnosis cedera).
 function acwrZone(ratio){
-  if(ratio==null) return {label:"Data belum cukup", color:"#5B6664"};
-  if(ratio < 0.8) return {label:"Beban rendah", color:"#378ADD"};
-  if(ratio <= 1.3) return {label:"Zona aman", color:"#1D9E75"};
-  if(ratio <= 1.5) return {label:"Risiko meningkat", color:"#EF9F27"};
-  return {label:"Risiko tinggi — lonjakan beban", color:"#E24B4A"};
+  if(ratio==null) return { label:"Insufficient baseline data", tag:"N/A", color:"#5B6664" };
+  if(ratio > 3.00) return { label:"Extreme workload spike", tag:"EXTREME", color:"#B23A3A" };
+  if(ratio > 2.00) return { label:"Very high workload", tag:"VERY HIGH", color:"#E24B4A" };
+  if(ratio > 1.50) return { label:"High workload", tag:"HIGH", color:"#E2793A" };
+  if(ratio > 1.30) return { label:"Elevated workload — caution", tag:"CAUTION", color:"#EF9F27" };
+  if(ratio >= 0.80) return { label:"Controlled workload", tag:"CONTROLLED", color:"#1D9E75" };
+  return { label:"Low workload", tag:"LOW", color:"#378ADD" };
+}
+const ACWR_RECOMMENDATIONS = {
+  LOW: "Training load is relatively low. Consider maintaining or gradually progressing workload according to the training plan.",
+  CONTROLLED: "Training load is currently controlled. Continue the planned progression.",
+  CAUTION: "Workload is elevated. Monitor recovery and avoid unnecessary additional volume.",
+  HIGH: "High workload detected. Consider reducing training volume or intensity in the next session.",
+  "VERY HIGH": "Very high workload spike detected. Review recent training volume, intensity and recovery before progressing.",
+  EXTREME: "Extreme workload spike detected. Coach review is recommended before additional high-intensity training."
+};
+
+/* ---------------- LOAD TREND (7 hari vs 7 hari sebelumnya) ---------------- */
+function trendStatusLabel(pct){
+  if(pct==null) return "Stable";
+  if(pct > 50) return "Rapid Increase";
+  if(pct > 10) return "Increasing";
+  if(pct < -10) return "Decreasing";
+  return "Stable";
+}
+function loadTrend(rows, refDate){
+  const day = 86400000;
+  const current = sumLoadInRange(rows, refDate-6*day, refDate);
+  const previous = sumLoadInRange(rows, refDate-13*day, refDate-7*day);
+  let pct = null;
+  if(previous > 0) pct = ((current - previous)/previous)*100;
+  else if(current > 0) pct = 100;
+  return { current, previous, pct, status: trendStatusLabel(pct) };
+}
+
+/* ---------------- STRENGTH LOAD (external load: sets × reps × kg) ---------------- */
+function strengthVolumeInRange(rows, fromMs, toMs){
+  return rows.filter(r=>r.date>=fromMs && r.date<=toMs).reduce((s,r)=>s+(r.volumeLoad||0),0);
+}
+function strengthVolumeTrend(rows, refDate){
+  const day = 86400000;
+  const current = strengthVolumeInRange(rows, refDate-6*day, refDate);
+  const previous = strengthVolumeInRange(rows, refDate-13*day, refDate-7*day);
+  let pct = null;
+  if(previous > 0) pct = ((current - previous)/previous)*100;
+  else if(current > 0) pct = 100;
+  return { current, previous, pct, status: trendStatusLabel(pct) };
+}
+function strengthStatsInRange(rows, fromMs, toMs){
+  const sessions = rows.filter(r=>r.date>=fromMs && r.date<=toMs && isStrengthCategory(r.trainingType));
+  const rpeVals = sessions.map(s=>s.rpe).filter(v=>v>0);
+  const avgRpe = rpeVals.length ? (rpeVals.reduce((a,b)=>a+b,0)/rpeVals.length) : null;
+  const exercises = sessions.flatMap(s=>s.strengthData||[]);
+  const rirVals = exercises.map(e=>e.rir).filter(v=>v!=null);
+  const avgRir = rirVals.length ? (rirVals.reduce((a,b)=>a+b,0)/rirVals.length) : null;
+  const pctVals = exercises.map(e=>e.pct1rm).filter(v=>v!=null);
+  const avgIntensity = pctVals.length ? (pctVals.reduce((a,b)=>a+b,0)/pctVals.length) : null;
+  return { sessions: sessions.length, avgRpe, avgRir, avgIntensity };
+}
+
+/* ---------------- TRAINING FREQUENCY ---------------- */
+function trainingFrequency(rows, fromMs, toMs){
+  const groups = { COMBAT:0, STRENGTH:0, CONDITIONING:0, SAQ:0, RECOVERY:0, OTHER:0 };
+  rows.filter(r=>r.date>=fromMs && r.date<=toMs).forEach(r=>{ groups[r.category] = (groups[r.category]||0) + 1; });
+  return groups;
+}
+
+/* ---------------- RECOVERY SCORE (memakai skor readiness harian) ---------------- */
+function recoveryStatus(score){
+  if(score==null) return { label:"Belum ada data", color:"#5B6664" };
+  if(score>=80) return { label:"Good", color:"#1D9E75" };
+  if(score>=60) return { label:"Moderate", color:"#EF9F27" };
+  if(score>=40) return { label:"Poor", color:"#E2793A" };
+  return { label:"Very Poor", color:"#E24B4A" };
+}
+
+/* ---------------- STRENGTH-SPECIFIC RECOMMENDATION ---------------- */
+function strengthSpecificRecommendation(volumeTrend, avgRpeCurrent, avgRpePrevious, avgIntensity, recoveryLabel){
+  if(!volumeTrend || volumeTrend.pct==null) return null;
+  const volUp = volumeTrend.pct > 15;
+  const rpeUp = (avgRpeCurrent!=null && avgRpePrevious!=null) ? (avgRpeCurrent - avgRpePrevious) >= 1 : false;
+  const rpeStable = (avgRpeCurrent!=null && avgRpePrevious!=null) ? Math.abs(avgRpeCurrent - avgRpePrevious) < 1 : false;
+  const recoveryLow = recoveryLabel==="Poor" || recoveryLabel==="Very Poor";
+  const recoveryGood = recoveryLabel==="Good" || recoveryLabel==="Moderate";
+  if(avgIntensity!=null && avgIntensity>90 && avgRpeCurrent!=null && avgRpeCurrent>=8 && recoveryLow){
+    return "High-intensity strength exposure combined with reduced recovery. Consider a lower-volume or recovery-focused session.";
+  }
+  if(volUp && rpeUp && recoveryLow){
+    return "Strength workload is increasing alongside higher perceived effort. Consider reducing volume or maintaining intensity with lower volume.";
+  }
+  if(volUp && rpeStable && recoveryGood){
+    return "Strength volume is progressing with stable perceived effort. Continue monitoring adaptation and recovery.";
+  }
+  return null;
 }
 function goalProgressPct(g){
   if(g.baseline==null || g.target==null || g.current==null) return null;
@@ -843,9 +985,11 @@ let state = {
   calendarSelectedDay: null,
   calendarFilters:{ athleteId:"", type:"" },
   competitionId:null,
-  adminSection:"roles", auditFilter:""
+  adminSection:"roles", auditFilter:"",
+  loadPeriod:7
 };
 let chartInstances = {};
+let tlDraft = null; // draft state form "Catat Sesi Latihan" (Training Load)
 function destroyChart(id){ if(chartInstances[id]){ chartInstances[id].destroy(); delete chartInstances[id]; } }
 
 /* ---------------- ROLE & PERMISSION (frontend gating) ----------------
@@ -2475,15 +2619,17 @@ function athleteNotesSection(a){
     `).join("")}
   `;
 }
-function modalAddNote(athleteId){
+function modalAddNote(payload){
+  const athleteId = (payload && typeof payload==='object') ? payload.athleteId : payload;
+  const defaultCategory = (payload && typeof payload==='object') ? payload.category : null;
   const today = new Date().toISOString().slice(0,10);
   return `
     <div class="modal-head"><h3>Tambah Catatan Coach</h3><button class="close-x" onclick="closeModal()">✕</button></div>
     <div class="field"><label>Tanggal</label><input id="nt-date" type="date" value="${today}"/></div>
     <div class="field"><label>Kategori</label>
-      <select id="nt-category">${NOTE_CATEGORIES.map(c=>`<option>${c}</option>`).join("")}</select>
+      <select id="nt-category">${NOTE_CATEGORIES.map(c=>`<option ${c===defaultCategory?'selected':''}>${c}</option>`).join("")}</select>
     </div>
-    <div class="field"><label>Catatan</label><textarea id="nt-note" rows="3" placeholder="Catatan tentang atlet..."></textarea></div>
+    <div class="field"><label>Catatan</label><textarea id="nt-note" rows="3" placeholder="Catatan / rekomendasi (cth. Reduce sparring volume by 20%)..."></textarea></div>
     <div class="field"><label>Priority</label>
       <select id="nt-priority"><option>Low</option><option selected>Medium</option><option>High</option></select>
     </div>
@@ -2608,33 +2754,102 @@ async function submitReadiness(athleteId){
 }
 
 /* ---------------- TRAINING LOAD ---------------- */
+function changeLoadPeriod(p){ state.loadPeriod = p; render(); }
 function athleteLoadSection(a){
-  const rows = loadDB(DB_KEYS.loads).filter(x=>x.athleteId===a.id).sort((x,y)=>y.date-x.date);
+  const day = 86400000;
   const now = Date.now();
-  const { acuteLoad, chronicWeeklyAvg, ratio } = computeACWR(rows, now);
+  const period = state.loadPeriod || 7;
+  const rows = loadDB(DB_KEYS.loads).filter(x=>x.athleteId===a.id).sort((x,y)=>y.date-x.date);
+
+  const { acuteLoad, chronicWeeklyAvg, ratio, sufficient } = computeACWR(rows, now);
   const zone = acwrZone(ratio);
-  const weekAgo = now - 7*86400000;
-  const weekLoad = sumLoadInRange(rows, weekAgo, now);
+  const trend = loadTrend(rows, now);
+  const strengthTrend = strengthVolumeTrend(rows, now);
+  const strengthNow = strengthStatsInRange(rows, now-6*day, now);
+  const strengthPrev = strengthStatsInRange(rows, now-13*day, now-7*day);
+  const freq = trainingFrequency(rows, now-6*day, now);
+
+  const readinessRows = loadDB(DB_KEYS.readiness).filter(x=>x.athleteId===a.id).sort((x,y)=>y.date-x.date);
+  const latestReadiness = readinessRows[0] || null;
+  const recoveryScore = latestReadiness ? latestReadiness.score : null;
+  const recStatus = recoveryStatus(recoveryScore);
+
+  const primaryRec = ACWR_RECOMMENDATIONS[zone.tag] || null;
+  const elevated = ["CAUTION","HIGH","VERY HIGH","EXTREME"].includes(zone.tag);
+  let combinedNote = null;
+  if(elevated && recoveryScore!=null){
+    combinedNote = (recStatus.label==="Poor" || recStatus.label==="Very Poor")
+      ? "High workload combined with reduced recovery. Consider reducing training stress and review the next session."
+      : "Workload is elevated, while current recovery indicators remain favorable. Continue monitoring.";
+  }
+  const strengthRec = strengthSpecificRecommendation(strengthTrend, strengthNow.avgRpe, strengthPrev.avgRpe, strengthNow.avgIntensity, recStatus.label);
+
+  const rangeRows = rows.filter(r=>r.date >= now - (period-1)*day);
+  const freqOrder = ["COMBAT","STRENGTH","CONDITIONING","SAQ","RECOVERY","OTHER"];
+
   return `
+    <div class="section-tabs">
+      ${[7,28,30].map(p=>`<button class="${period===p?'active':''}" onclick="changeLoadPeriod(${p})">${p} HARI</button>`).join("")}
+    </div>
+
+    <h2 class="page-title">Training Load</h2>
     <div class="stat-grid">
-      <div class="stat-card"><div class="label">BEBAN 7 HARI</div><div class="value">${weekLoad}</div></div>
-      <div class="stat-card"><div class="label">ACWR</div><div class="value" style="color:${zone.color}">${ratio!=null?ratio.toFixed(2):'-'}</div></div>
+      <div class="stat-card"><div class="label">ACUTE LOAD</div><div class="value">${Math.round(acuteLoad)}</div><div class="helper">AU · Last 7 Days</div></div>
+      <div class="stat-card"><div class="label">CHRONIC LOAD</div><div class="value">${sufficient ? Math.round(chronicWeeklyAvg) : '-'}</div><div class="helper">${sufficient ? '28-Day Baseline (AU/wk)' : 'Insufficient baseline data'}</div></div>
+      <div class="stat-card"><div class="label">ACWR</div><div class="value" style="color:${zone.color}">${ratio!=null?ratio.toFixed(2):'-'}</div><div class="helper" style="color:${zone.color};font-weight:700;">${zone.tag}</div></div>
+      <div class="stat-card"><div class="label">LOAD TREND</div><div class="value">${trend.pct!=null ? (trend.pct>=0?'↑':'↓')+' '+Math.abs(trend.pct).toFixed(0)+'%' : '-'}</div><div class="helper">${trend.status}</div></div>
     </div>
-    <div class="helper" style="margin:-6px 0 14px;color:${zone.color};font-weight:700;">${zone.label}</div>
-    ${isStaff() ? `<button class="btn" onclick="openModal('addTrainingSession','${a.id}')">+ Catat Sesi Latihan</button>` : ""}
+    ${!sufficient ? `<div class="helper" style="margin:6px 0 4px;">Continue recording training sessions to establish a reliable chronic workload baseline.</div>` : ""}
+    <div class="helper" style="margin:6px 0 14px;font-style:italic;">ACWR is a workload monitoring metric and should not be used as a standalone injury-risk or medical diagnostic tool. Interpret alongside training history, recovery, performance, training phase and coach assessment.</div>
+
+    ${isStaff() ? `<button class="btn" onclick="openTrainingSessionModal('${a.id}')">+ Catat Sesi Latihan</button>` : ""}
+
+    <h2 class="page-title" style="margin-top:20px;">Strength Load</h2>
+    <div class="stat-grid">
+      <div class="stat-card"><div class="label">VOLUME</div><div class="value">${Math.round(strengthTrend.current)}</div><div class="helper">kg · 7 hari</div></div>
+      <div class="stat-card"><div class="label">VOLUME TREND</div><div class="value">${strengthTrend.pct!=null ? (strengthTrend.pct>=0?'↑':'↓')+' '+Math.abs(strengthTrend.pct).toFixed(0)+'%' : '-'}</div><div class="helper">${strengthTrend.status}</div></div>
+      <div class="stat-card"><div class="label">SESSIONS</div><div class="value">${strengthNow.sessions}</div><div class="helper">/ week</div></div>
+      <div class="stat-card"><div class="label">AVG RPE</div><div class="value">${strengthNow.avgRpe!=null?strengthNow.avgRpe.toFixed(1):'-'}</div></div>
+      <div class="stat-card"><div class="label">AVG RIR</div><div class="value">${strengthNow.avgRir!=null?strengthNow.avgRir.toFixed(1):'-'}</div></div>
+      <div class="stat-card"><div class="label">AVG INTENSITY</div><div class="value">${strengthNow.avgIntensity!=null?strengthNow.avgIntensity.toFixed(1)+'%':'-'}</div><div class="helper">${strengthNow.avgIntensity!=null?'% 1RM':'1RM data unavailable'}</div></div>
+    </div>
+
+    <h2 class="page-title" style="margin-top:20px;">Training Frequency (7 Hari)</h2>
+    <div class="stat-grid">
+      ${freqOrder.map(k=>`<div class="stat-card"><div class="label">${TRAINING_GROUP_LABELS[k]}</div><div class="value">${freq[k]}×</div><div class="helper">/ week</div></div>`).join("")}
+    </div>
+
+    <h2 class="page-title" style="margin-top:20px;">Recovery</h2>
+    <div class="stat-grid">
+      <div class="stat-card"><div class="label">RECOVERY SCORE</div><div class="value" style="color:${recStatus.color}">${recoveryScore!=null?recoveryScore:'-'}</div><div class="helper" style="color:${recStatus.color};font-weight:700;">${recStatus.label}</div></div>
+    </div>
+    ${!latestReadiness ? `<div class="helper" style="margin:6px 0 4px;">Belum ada data readiness untuk menghitung recovery score. Isi di tab Readiness.</div>` : ""}
+
+    ${(primaryRec || combinedNote || strengthRec) ? `
+      <h2 class="page-title" style="margin-top:20px;">Recommendation</h2>
+      <div class="chart-card">
+        ${primaryRec ? `<p style="margin:0 0 8px;">${primaryRec}</p>` : ""}
+        ${combinedNote ? `<p style="margin:0 0 8px;color:${zone.color};font-weight:600;">${combinedNote}</p>` : ""}
+        ${strengthRec ? `<p style="margin:0;">${strengthRec}</p>` : ""}
+      </div>
+    ` : ""}
+
     <div class="chart-card" style="margin-top:16px;">
-      <h3>Beban Latihan Harian (30 Hari Terakhir)</h3>
-      ${rows.length===0 ? `<div class="chart-empty">Belum ada data training load.</div>` : `<canvas id="chart-load" height="180"></canvas>`}
+      <h3>Beban Latihan Harian (${period} Hari Terakhir)</h3>
+      ${rangeRows.length===0 ? `<div class="chart-empty">Belum ada data training load.</div>` : `<canvas id="chart-load" height="180"></canvas>`}
     </div>
+
+    ${isStaff() ? `<button class="btn ghost" style="margin-top:10px;" onclick="openModal('addNote', {athleteId:'${a.id}', category:'Training'})">+ Catatan / Rekomendasi Coach</button>` : ""}
+
     ${rows.length===0 ? "" : `
-      <h2 class="page-title">Riwayat Sesi</h2>
-      ${rows.slice(0,15).map(r=>`
+      <h2 class="page-title" style="margin-top:20px;">Riwayat Sesi</h2>
+      ${rows.slice(0,20).map(r=>`
         <div class="history-row">
           <div class="h-left">
-            <b>${r.sessionType} · ${new Date(r.date).toLocaleDateString("id-ID",{day:"2-digit",month:"short",year:"numeric"})}</b>
-            <span>${r.duration} menit × RPE ${r.rpe}</span>
+            <b>${r.trainingType} · ${new Date(r.date).toLocaleDateString("id-ID",{day:"2-digit",month:"short",year:"numeric"})}</b>
+            <span>${r.duration} menit × RPE ${r.rpe}${r.volumeLoad>0?` · Volume ${Math.round(r.volumeLoad)} kg`:""}</span>
           </div>
-          <span class="badge" style="background:#159A94">${r.load}</span>
+          <span class="badge" style="background:#159A94">${Math.round(r.load)} AU</span>
         </div>
       `).join("")}
     `}
@@ -2643,47 +2858,141 @@ function athleteLoadSection(a){
 function drawLoadChart(){
   destroyChart("chart-load");
   const canvas = document.getElementById("chart-load"); if(!canvas) return;
-  const rows = loadDB(DB_KEYS.loads).filter(x=>x.athleteId===state.athleteId).sort((a,b)=>a.date-b.date).slice(-30);
+  const day = 86400000;
+  const now = Date.now();
+  const period = state.loadPeriod || 7;
+  const rows = loadDB(DB_KEYS.loads).filter(x=>x.athleteId===state.athleteId && x.date>=now-(period-1)*day).sort((a,b)=>a.date-b.date);
   if(rows.length===0) return;
   const labels = rows.map(r=>new Date(r.date).toLocaleDateString("id-ID",{day:"2-digit",month:"short"}));
-  const data = rows.map(r=>r.load);
+  const data = rows.map(r=>Math.round(r.load));
   chartInstances["chart-load"] = new Chart(canvas, {
     type:"bar",
-    data:{ labels, datasets:[{ label:"Session Load", data, backgroundColor:"#20B2AA" }] },
+    data:{ labels, datasets:[{ label:"Session Load (AU)", data, backgroundColor:"#20B2AA" }] },
     options:{ responsive:true, plugins:{legend:{display:false}}, scales:{ y:{ticks:{font:{size:10}}}, x:{ticks:{font:{size:10}}} } }
   });
 }
+
+/* ---- Modal: Catat Sesi Latihan (dengan input Strength Training) ---- */
+function openTrainingSessionModal(athleteId){
+  tlDraft = { athleteId, date: new Date().toISOString().slice(0,10), type:"", duration:"", rpe:"", notes:"", rows:[] };
+  openModal("addTrainingSession", athleteId);
+}
+function changeTlType(val){ tlDraft.type = val; render(); }
+function addTlRow(){ tlDraft.rows.push({exercise:"",sets:"",reps:"",load:"",pct1rm:"",rir:"",exerciseRpe:""}); render(); }
+function removeTlRow(i){ tlDraft.rows.splice(i,1); render(); }
+function updateTlRow(i, field, val){ tlDraft.rows[i][field] = val; }
+function refreshTlLoad(){
+  const el = document.getElementById("tl-load-preview");
+  if(el) el.innerHTML = `Session Load: <b>${(Number(tlDraft.duration)||0)*(Number(tlDraft.rpe)||0)} AU</b> (Duration × RPE)`;
+}
 function modalAddTrainingSession(athleteId){
-  const today = new Date().toISOString().slice(0,10);
+  if(!tlDraft || tlDraft.athleteId!==athleteId) tlDraft = { athleteId, date:new Date().toISOString().slice(0,10), type:"", duration:"", rpe:"", notes:"", rows:[] };
+  const d = tlDraft;
+  const strength = isStrengthCategory(d.type);
+  const groupOrder = ["COMBAT","STRENGTH","CONDITIONING","SAQ","RECOVERY","OTHER"];
+  const optionsHtml = groupOrder.map(g=>`
+    <optgroup label="${TRAINING_GROUP_LABELS[g]}">
+      ${TRAINING_TYPES.filter(t=>t.group===g).map(t=>`<option value="${t.value}" ${d.type===t.value?'selected':''}>${t.value}</option>`).join("")}
+    </optgroup>
+  `).join("");
+  const sessionLoad = (Number(d.duration)||0) * (Number(d.rpe)||0);
+  const totalVolume = d.rows.reduce((s,r)=>s+((Number(r.sets)||0)*(Number(r.reps)||0)*(Number(r.load)||0)),0);
   return `
     <div class="modal-head"><h3>Catat Sesi Latihan</h3><button class="close-x" onclick="closeModal()">✕</button></div>
-    <div class="field"><label>Tanggal</label><input id="tl-date" type="date" value="${today}"/></div>
-    <div class="field"><label>Jenis sesi</label><input id="tl-type" type="text" placeholder="cth. Strength, Conditioning, Sparring"/></div>
-    <div class="field"><label>Durasi (menit)</label><input id="tl-duration" type="number" placeholder="cth. 60"/></div>
-    <div class="field"><label>Session RPE (1-10)</label><input id="tl-rpe" type="number" min="1" max="10" placeholder="cth. 6"/></div>
-    <div class="field"><label>Catatan (opsional)</label><input id="tl-notes" type="text" placeholder="Catatan tambahan"/></div>
-    <div id="tl-err" class="err" style="display:none;"></div>
-    <button class="btn" onclick="submitTrainingSession('${athleteId}')">Simpan Sesi</button>
+    <div class="field"><label>Tanggal</label><input type="date" value="${d.date}" onchange="tlDraft.date=this.value"/></div>
+    <div class="field"><label>Jenis Latihan</label>
+      <select onchange="changeTlType(this.value)">
+        <option value="" ${d.type===''?'selected':''}>Pilih jenis latihan</option>
+        ${optionsHtml}
+      </select>
+    </div>
+    <div class="field-row">
+      <div class="field"><label>Durasi (menit, 1-300)</label><input type="number" min="1" max="300" value="${d.duration}" oninput="tlDraft.duration=this.value; refreshTlLoad();"/></div>
+      <div class="field"><label>Session RPE (0-10)</label>
+        <select onchange="tlDraft.rpe=this.value; refreshTlLoad();">
+          <option value="">-</option>
+          ${Object.entries(RPE_SCALE).map(([k,v])=>`<option value="${k}" ${String(d.rpe)===k?'selected':''}>${k} - ${v}</option>`).join("")}
+        </select>
+      </div>
+    </div>
+    <div class="helper" id="tl-load-preview">Session Load: <b>${sessionLoad||0} AU</b> (Duration × RPE)</div>
+    <div class="field"><label>Catatan (opsional)</label><input type="text" value="${d.notes||''}" oninput="tlDraft.notes=this.value" placeholder="Catatan tambahan"/></div>
+
+    ${strength ? `
+      <h3 style="margin:14px 0 8px;">Strength Exercises</h3>
+      ${d.rows.map((row,i)=>`
+        <div class="chart-card" style="margin-bottom:10px;">
+          <div class="field"><label>Exercise</label><input type="text" value="${row.exercise||''}" oninput="updateTlRow(${i},'exercise',this.value)" placeholder="cth. Back Squat"/></div>
+          <div class="field-row3">
+            <div class="field"><label>Sets</label><input type="number" min="1" max="100" value="${row.sets||''}" oninput="updateTlRow(${i},'sets',this.value)"/></div>
+            <div class="field"><label>Reps</label><input type="number" min="1" max="100" value="${row.reps||''}" oninput="updateTlRow(${i},'reps',this.value)"/></div>
+            <div class="field"><label>Load (kg)</label><input type="number" min="0" max="1000" value="${row.load||''}" oninput="updateTlRow(${i},'load',this.value)"/></div>
+          </div>
+          <div class="field-row3">
+            <div class="field"><label>% 1RM (opsional)</label><input type="number" min="0" max="100" value="${row.pct1rm||''}" oninput="updateTlRow(${i},'pct1rm',this.value)"/></div>
+            <div class="field"><label>RIR (opsional)</label><input type="number" min="0" max="10" value="${row.rir||''}" oninput="updateTlRow(${i},'rir',this.value)"/></div>
+            <div class="field"><label>Exercise RPE (opsional)</label><input type="number" min="0" max="10" value="${row.exerciseRpe||''}" oninput="updateTlRow(${i},'exerciseRpe',this.value)"/></div>
+          </div>
+          <div class="helper">Volume Load: <b>${(Number(row.sets)||0)*(Number(row.reps)||0)*(Number(row.load)||0)} kg</b></div>
+          <span class="delete-link" onclick="removeTlRow(${i})">Hapus exercise</span>
+        </div>
+      `).join("")}
+      <button class="btn ghost" onclick="addTlRow()">+ Tambah Exercise</button>
+      <div class="helper" style="margin-top:8px;">Total Volume Load: <b>${totalVolume} kg</b></div>
+    ` : ""}
+
+    <div id="tl-err" class="err" style="display:none;margin-top:10px;"></div>
+    <button class="btn" style="margin-top:12px;" onclick="submitTrainingSession()">Simpan Sesi</button>
   `;
 }
-async function submitTrainingSession(athleteId){
+async function submitTrainingSession(){
   const errBox = document.getElementById("tl-err");
-  const dateVal = document.getElementById("tl-date").value;
-  const type = document.getElementById("tl-type").value.trim();
-  const duration = document.getElementById("tl-duration").value;
-  const rpe = document.getElementById("tl-rpe").value;
-  const notes = document.getElementById("tl-notes").value;
-  if(!dateVal || !type || duration==="" || rpe===""){ errBox.style.display="block"; errBox.textContent="Lengkapi tanggal, jenis sesi, durasi, dan RPE."; return; }
+  const d = tlDraft;
+  const duration = Number(d.duration);
+  const rpe = d.rpe===""? null : Number(d.rpe);
+  if(!d.date || !d.type){ errBox.style.display="block"; errBox.textContent="Pilih tanggal dan jenis latihan."; return; }
+  if(!duration || duration<1 || duration>300){ errBox.style.display="block"; errBox.textContent="Durasi harus antara 1-300 menit. Session load tidak dapat dihitung."; return; }
+  if(rpe==null || rpe<0 || rpe>10){ errBox.style.display="block"; errBox.textContent="Session RPE harus antara 0-10. Session load tidak dapat dihitung."; return; }
   errBox.style.display="none";
-  const load = Number(duration) * Number(rpe);
-  const { error } = await sb.from("training_sessions").insert({
-    athlete_id: athleteId, session_date: dateVal, session_type: type,
-    duration_minutes: Number(duration), session_rpe: Number(rpe), notes: notes || null
-  });
-  if(error){ errBox.style.display="block"; errBox.textContent="Gagal menyimpan: " + error.message; return; }
+
+  let strengthPayload = null;
+  if(isStrengthCategory(d.type) && d.rows.length){
+    const cleanRows = [];
+    for(const r of d.rows){
+      if(!r.exercise || r.sets==="" || r.reps==="" || r.load==="") continue;
+      const sets = Number(r.sets), reps = Number(r.reps), load = Number(r.load);
+      if(sets<1||sets>100||reps<1||reps>100||load<0||load>1000){
+        errBox.style.display="block"; errBox.textContent = `Data exercise "${r.exercise}" di luar rentang valid (sets/reps 1-100, load 0-1000 kg).`; return;
+      }
+      const pct1rm = r.pct1rm===""?null:Number(r.pct1rm);
+      if(pct1rm!=null && (pct1rm<0||pct1rm>100)){ errBox.style.display="block"; errBox.textContent="% 1RM harus antara 0-100."; return; }
+      const rir = r.rir===""?null:Number(r.rir);
+      if(rir!=null && (rir<0||rir>10)){ errBox.style.display="block"; errBox.textContent="RIR harus antara 0-10."; return; }
+      const exerciseRpe = r.exerciseRpe===""?null:Number(r.exerciseRpe);
+      cleanRows.push({ exercise:r.exercise, sets, reps, load, pct1rm, rir, exerciseRpe });
+    }
+    if(cleanRows.length) strengthPayload = cleanRows;
+  }
+
+  const sessionLoad = duration * rpe;
+  const insertObj = {
+    athlete_id: d.athleteId, session_date: d.date, session_type: d.type,
+    duration_minutes: duration, session_rpe: rpe, notes: d.notes || null
+  };
+  if(strengthPayload) insertObj.strength_data = strengthPayload;
+
+  const { error } = await sb.from("training_sessions").insert(insertObj);
+  if(error){
+    errBox.style.display="block";
+    errBox.textContent = strengthPayload
+      ? "Gagal menyimpan: " + error.message + " — pastikan kolom strength_data (jsonb) sudah ditambahkan di tabel training_sessions."
+      : "Gagal menyimpan: " + error.message;
+    return;
+  }
   await refreshTrainingLoad();
+  tlDraft = null;
   closeModal(); render();
-  showToast(`Sesi tersimpan · Load ${load}`);
+  showToast(`Sesi tersimpan · Session Load ${sessionLoad} AU`);
 }
 
 /* ---------------- GOALS & KPI ---------------- */
