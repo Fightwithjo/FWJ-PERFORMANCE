@@ -309,9 +309,9 @@ const BUCKET = "athlete-assets";
    loadDB(DB_KEYS.athletes) dsb) tidak perlu diubah satu per satu —
    loadDB() sekarang membaca dari cache in-memory yang diisi lewat
    Supabase, bukan dari localStorage. */
-const DB_KEYS = { athletes:"athletes", tests:"tests", assessments:"assessments", injuries:"injuries", readiness:"readiness", loads:"loads", goals:"goals", batteries:"batteries", batterySessions:"batterySessions", rehabLogs:"rehabLogs", asymmetry:"asymmetry", notes:"notes", competitions:"competitions", competitionResults:"competitionResults", masterplans:"masterplans" };
+const DB_KEYS = { athletes:"athletes", tests:"tests", assessments:"assessments", injuries:"injuries", readiness:"readiness", loads:"loads", goals:"goals", batteries:"batteries", batterySessions:"batterySessions", rehabLogs:"rehabLogs", asymmetry:"asymmetry", notes:"notes", competitions:"competitions", competitionResults:"competitionResults", masterplans:"masterplans", scoringProfiles:"scoringProfiles", scoringRanges:"scoringRanges" };
 
-let cache = { athletes:[], tests:[], assessments:[], injuries:[], testCategories:[], bodyParts:[], profile:null, readiness:[], loads:[], goals:[], batteries:[], batterySessions:[], rehabLogs:[], asymmetry:[], notes:[], competitions:[], competitionResults:[], masterplans:[] };
+let cache = { athletes:[], tests:[], assessments:[], injuries:[], testCategories:[], bodyParts:[], profile:null, readiness:[], loads:[], goals:[], batteries:[], batterySessions:[], rehabLogs:[], asymmetry:[], notes:[], competitions:[], competitionResults:[], masterplans:[], scoringProfiles:[], scoringRanges:[] };
 
 function loadDB(key){ return cache[key] || []; }
 function uid(){ return Date.now().toString(36) + Math.random().toString(36).slice(2,7); }
@@ -435,6 +435,20 @@ function mapBatterySessionRow(s){
     date: new Date(s.session_date).getTime(), notes: s.coach_notes || "", status: s.status || "completed"
   };
 }
+function mapScoringProfileRow(p){
+  return {
+    id: p.id, testId: p.test_id, gender: p.gender, ageGroup: p.age_group || null,
+    sport: p.sport || null, position: p.position || null,
+    direction: p.scoring_direction === "lower_better" ? "lower" : "higher",
+    unit: p.unit || "", isActive: p.is_active
+  };
+}
+function mapScoringRangeRow(r){
+  return {
+    id: r.id, profileId: r.scoring_profile_id, category: r.category,
+    min: Number(r.min_value), max: Number(r.max_value), score: Number(r.score), sortOrder: r.sort_order || 0
+  };
+}
 function mapRehabLogRow(r){
   return {
     id: r.id, injuryId: r.injury_id, athleteId: r.athlete_id, date: new Date(r.log_date).getTime(),
@@ -499,20 +513,30 @@ async function refreshAthletes(){
 
 async function refreshAssessments(){
   const { data, error } = await sb.from("performance_results")
-    .select("id, value, unit, athlete_id, test_id, assessments(id, assessment_date, battery_session_id)")
+    .select("id, value, unit, athlete_id, test_id, computed_score, computed_category, scoring_profile_id, is_manual_override, override_reason, assessments(id, assessment_date, battery_session_id)")
     .order("created_at", {ascending:false});
   if(error){ showToast("Gagal memuat riwayat tes"); return; }
-  cache.assessments = (data||[]).map(r => {
-    const test = cache.tests.find(t => t.id === r.test_id);
-    const category = test ? computeCategory(test, r.value) : "Average";
-    return {
-      id: r.id, athleteId: r.athlete_id, testId: r.test_id,
-      assessmentId: r.assessments ? r.assessments.id : null,
-      date: r.assessments ? new Date(r.assessments.assessment_date).getTime() : Date.now(),
-      batterySessionId: r.assessments ? r.assessments.battery_session_id : null,
-      rawScore: Number(r.value), category
-    };
-  });
+  cache.assessments = (data||[]).map(r => ({
+    id: r.id, athleteId: r.athlete_id, testId: r.test_id,
+    assessmentId: r.assessments ? r.assessments.id : null,
+    date: r.assessments ? new Date(r.assessments.assessment_date).getTime() : Date.now(),
+    batterySessionId: r.assessments ? r.assessments.battery_session_id : null,
+    rawScore: Number(r.value),
+    score: r.computed_score!=null ? Number(r.computed_score) : null,
+    category: r.computed_category || null,
+    scoringProfileId: r.scoring_profile_id || null,
+    isOverride: !!r.is_manual_override, overrideReason: r.override_reason || ""
+  }));
+}
+async function refreshScoringProfiles(){
+  const { data, error } = await sb.from("test_scoring_profiles").select("*").order("created_at",{ascending:true});
+  if(error){ showToast("Gagal memuat standar skor"); return; }
+  cache.scoringProfiles = (data||[]).map(mapScoringProfileRow);
+}
+async function refreshScoringRanges(){
+  const { data, error } = await sb.from("test_scoring_ranges").select("*").order("sort_order",{ascending:true});
+  if(error){ showToast("Gagal memuat range skor"); return; }
+  cache.scoringRanges = (data||[]).map(mapScoringRangeRow);
 }
 
 async function refreshInjuries(){
@@ -578,6 +602,8 @@ async function refreshAll(){
   await refreshReferenceData();
   await refreshTests();
   await refreshAthletes();
+  await refreshScoringProfiles();
+  await refreshScoringRanges();
   await refreshAssessments();
   await refreshInjuries();
   await refreshReadiness();
@@ -614,13 +640,16 @@ function dataUrlToBlob(dataUrl){
    Logika kategori performa (Poor / Average / Good / Elite)
 ========================================================== */
 const CAT_META = {
-  Poor:{color:"var(--poor)"}, Average:{color:"var(--average)"},
-  Good:{color:"var(--good)"}, Elite:{color:"var(--elite)"}
+  Poor:{color:"var(--poor)"}, "Below Average":{color:"#E2841F"}, Average:{color:"var(--average)"},
+  Good:{color:"var(--good)"}, Excellent:{color:"#159A94"}, Elite:{color:"var(--elite)"}
 };
 function catColor(cat){
-  const m = { Poor:"#E24B4A", Average:"#EF9F27", Good:"#378ADD", Elite:"#1D9E75" };
+  const m = { Poor:"#E24B4A", "Below Average":"#E2841F", Average:"#EF9F27", Good:"#378ADD", Excellent:"#159A94", Elite:"#1D9E75" };
   return m[cat] || "#5B6664";
 }
+// LEGACY — tidak lagi dipakai untuk scoring aktif (diganti scoring engine
+// gender/age-based di bawah). Dibiarkan ada supaya tidak ada referensi rusak
+// kalau ada kode lama yang belum sempat diupdate.
 function computeCategory(test, rawScore){
   const b = test.benchmarks; const higher = test.direction === "higher"; const score = Number(rawScore);
   if(higher){ if(score>=b.elite) return "Elite"; if(score>=b.good) return "Good"; if(score>=b.average) return "Average"; return "Poor"; }
@@ -632,6 +661,60 @@ function computeImprovement(test, before, after){
   const diff = higher ? (after - before) : (before - after);
   const pct = before !== 0 ? (diff / Math.abs(before)) * 100 : 0;
   return { diff, pct };
+}
+
+/* ==========================================================
+   SCORING ENGINE — gender & age-based (spec #31-#51)
+   Dynamic + database-driven, bukan hard-coded di JS. Semua standar
+   (test_scoring_profiles + test_scoring_ranges) berasal dari DB dan
+   dikelola Admin lewat halaman "Standar Skor".
+========================================================== */
+const AGE_GROUP_BOUNDS = [ {label:"U15", max:15}, {label:"U17", max:17}, {label:"U19", max:19} ];
+function ageGroupFor(age){
+  if(age==null) return null;
+  for(const g of AGE_GROUP_BOUNDS){ if(age <= g.max) return g.label; }
+  return "Senior";
+}
+function athleteGenderLabel(a){ return a.gender === "P" ? "Female" : "Male"; }
+// Cari scoring profile paling spesifik yang cocok untuk test+atlet.
+// Prioritas: gender+age+sport+position > gender+age > gender saja > gender 'Any'.
+function findScoringProfile(testId, athlete){
+  const gender = athleteGenderLabel(athlete);
+  const ageGroup = ageGroupFor(athlete.age);
+  const candidates = loadDB(DB_KEYS.scoringProfiles).filter(p =>
+    p.testId === testId && p.isActive && (p.gender === gender || p.gender === "Any")
+  );
+  if(candidates.length === 0) return null;
+  const specificity = p => (p.gender===gender?2:0) + (p.ageGroup?1:0) + (p.sport?1:0) + (p.position?1:0);
+  const matches = candidates.filter(p =>
+    (!p.ageGroup || p.ageGroup === ageGroup) &&
+    (!p.sport || p.sport === athlete.sport) &&
+    (!p.position || p.position === athlete.position)
+  );
+  if(matches.length === 0) return null;
+  matches.sort((a,b)=>specificity(b)-specificity(a));
+  return matches[0];
+}
+// Hasil: { profile, category, score } — atau null kalau tidak ada
+// standard yang cocok sama sekali (spec #39 — jangan bikin skor palsu).
+function scoreResult(testId, athlete, rawValue){
+  const profile = findScoringProfile(testId, athlete);
+  if(!profile) return null;
+  const ranges = loadDB(DB_KEYS.scoringRanges).filter(r=>r.profileId===profile.id).sort((a,b)=>a.sortOrder-b.sortOrder);
+  const val = Number(rawValue);
+  const match = ranges.find(r => val >= r.min && val <= r.max);
+  return { profile, category: match ? match.category : null, score: match ? match.score : null };
+}
+// Personal Best — arah tergantung scoring_direction profile (kalau ada),
+// fallback ke test.direction lama kalau belum ada profile sama sekali.
+function isPersonalBest(rows, idx, direction){
+  const row = rows[idx];
+  const others = rows.filter((_,i)=>i!==idx);
+  if(others.length === 0) return true;
+  const better = direction === "lower"
+    ? others.every(o=>row.rawScore <= o.rawScore)
+    : others.every(o=>row.rawScore >= o.rawScore);
+  return better;
 }
 
 /* ==========================================================
@@ -823,7 +906,6 @@ function asymmetryZone(pct, threshold){
 /* ==========================================================
    Performance Profile & Athlete Comparison — perhitungan
 ========================================================== */
-const CATEGORY_NUMERIC = { Poor:25, Average:50, Good:75, Elite:100 };
 const PROFILE_BUCKETS = ["Speed","Strength","Power","Endurance","Agility","Mobility","Conditioning"];
 function bucketForTest(t){
   const s = ((t.iconKey||"") + " " + (t.name||"")).toLowerCase();
@@ -840,16 +922,20 @@ function bucketForTest(t){
 function athleteTestHistory(athleteId, testId){
   return loadDB(DB_KEYS.assessments).filter(x=>x.athleteId===athleteId && x.testId===testId).sort((a,b)=>b.date-a.date);
 }
+// Semua perhitungan di bawah pakai `score` (0-100, hasil scoring engine
+// gender/age-based) — BUKAN kategori lama. Hasil tanpa scoring standard
+// (score === null) dikecualikan dari rata-rata, tidak dianggap 0 ataupun
+// dikarang nilainya (spec #22, #39).
 function buildPerformanceProfile(athleteId){
   const tests = loadDB(DB_KEYS.tests);
   const current = {}, previous = {};
   PROFILE_BUCKETS.forEach(b=>{ current[b] = []; previous[b] = []; });
   tests.forEach(t=>{
     const bucket = bucketForTest(t); if(!bucket) return;
-    const rows = athleteTestHistory(athleteId, t.id);
+    const rows = athleteTestHistory(athleteId, t.id).filter(r=>r.score!=null);
     if(rows.length===0) return;
-    current[bucket].push(CATEGORY_NUMERIC[rows[0].category] ?? 50);
-    if(rows.length>=2) previous[bucket].push(CATEGORY_NUMERIC[rows[1].category] ?? 50);
+    current[bucket].push(rows[0].score);
+    if(rows.length>=2) previous[bucket].push(rows[1].score);
   });
   const avg = arr => arr.length ? Math.round(arr.reduce((a,b)=>a+b,0)/arr.length) : null;
   return {
@@ -858,13 +944,14 @@ function buildPerformanceProfile(athleteId){
     previous: PROFILE_BUCKETS.map(b=>avg(previous[b]))
   };
 }
-// skor performa keseluruhan atlet (rata-rata kategori numerik dari hasil tes terbaru per tes)
+// skor performa keseluruhan atlet (rata-rata score ternormalisasi dari
+// hasil tes terbaru per tes yang punya scoring standard)
 function athletePerformanceScore(athleteId){
   const tests = loadDB(DB_KEYS.tests);
   const vals = [];
   tests.forEach(t=>{
-    const rows = athleteTestHistory(athleteId, t.id);
-    if(rows.length) vals.push(CATEGORY_NUMERIC[rows[0].category] ?? 50);
+    const rows = athleteTestHistory(athleteId, t.id).filter(r=>r.score!=null);
+    if(rows.length) vals.push(rows[0].score);
   });
   return vals.length ? Math.round(vals.reduce((a,b)=>a+b,0)/vals.length) : null;
 }
@@ -1069,7 +1156,7 @@ function renderMain(){
   if(state.tab === "dashboard") drawDashboardChart();
   if(state.tab === "compare") drawComparisonChart();
   if(state.tab === "athletes" && state.athleteId){
-    if(state.athleteSection === "performance") drawProfileChart();
+    if(state.athleteSection === "performance") { drawProfileChart(); drawScoreTrendChart(); }
     if(state.athleteSection === "improvement") drawImprovementChart();
     if(state.athleteSection === "readiness") drawReadinessChart();
     if(state.athleteSection === "load") drawLoadChart();
@@ -1553,9 +1640,10 @@ function viewAdminPanel(){
     <h2 class="page-title">Admin Panel</h2>
     <div class="section-tabs">
       <button class="${state.adminSection==='roles'?'active':''}" onclick="setAdminSection('roles')">Role & Permission</button>
+      <button class="${state.adminSection==='scoring'?'active':''}" onclick="setAdminSection('scoring')">Standar Skor</button>
       <button class="${state.adminSection==='audit'?'active':''}" onclick="setAdminSection('audit')">Audit Log</button>
     </div>
-    ${state.adminSection==='roles' ? viewRoleManagement() : viewAuditLog()}
+    ${state.adminSection==='roles' ? viewRoleManagement() : state.adminSection==='scoring' ? viewScoringStandards() : viewAuditLog()}
   `;
 }
 function viewRoleManagement(){
@@ -1573,7 +1661,8 @@ function viewRoleManagement(){
   `;
 }
 function viewAuditLog(){
-  const tableOptions = ["athletes","injuries","athlete_goals","readiness_logs","training_sessions","rehab_logs","athlete_notes","competitions","competition_results"];
+  const tableOptions = ["athletes","injuries","athlete_goals","readiness_logs","training_sessions",
+    "rehab_logs","athlete_notes","competitions","competition_results","performance_results"];
   return `
     <div class="filter-row">
       <select onchange="state.auditFilter=this.value; loadAuditLogs();">
@@ -1591,6 +1680,335 @@ function viewAuditLog(){
       </div>
     `).join("")}
   `;
+}
+
+/* ---------------- ADMIN: STANDAR SKOR (Test Score Category, spec #31-51) ---------------- */
+const SCORE_CATEGORIES = ["Poor","Below Average","Average","Good","Excellent","Elite"];
+const SCORE_CATEGORY_DEFAULTS = {"Poor":10,"Below Average":30,"Average":50,"Good":70,"Excellent":85,"Elite":100};
+function viewScoringStandards(){
+  const tests = loadDB(DB_KEYS.tests);
+  const profiles = loadDB(DB_KEYS.scoringProfiles);
+  return `
+    <p class="helper" style="margin-bottom:10px;">Standar skor per tes, per gender (opsional per age group/sport/position). Hasil tes atlet dihitung otomatis berdasarkan standar yang cocok — kalau belum ada standar untuk gender/umur atlet tertentu, hasil tersimpan tanpa skor (tidak dikarang).</p>
+    <div style="display:flex;gap:8px;margin-bottom:14px;">
+      <button class="btn" style="flex:1;" onclick="openModal('addScoringProfile')">+ Buat Standar Baru</button>
+      <button class="btn ghost" style="flex:1;" onclick="openModal('importScoringStandards')">Import CSV</button>
+    </div>
+    <button class="btn ghost" style="margin-bottom:14px;" onclick="exportScoringStandardsCSV()">Export Semua Standar (CSV)</button>
+    ${profiles.length===0 ? `<div class="chart-empty">Belum ada standar skor dibuat.</div>` : tests.filter(t=>profiles.some(p=>p.testId===t.id)).map(t=>`
+      <h2 class="page-title" style="margin-top:14px;">${t.icon} ${t.name}</h2>
+      ${profiles.filter(p=>p.testId===t.id).map(p=>{
+        const ranges = loadDB(DB_KEYS.scoringRanges).filter(r=>r.profileId===p.id).sort((a,b)=>a.sortOrder-b.sortOrder);
+        return `
+          <div class="chart-card">
+            <div style="display:flex;justify-content:space-between;align-items:center;">
+              <b style="font-size:13px;">${p.gender}${p.ageGroup?' · '+p.ageGroup:''}${p.sport?' · '+p.sport:''}${p.position?' · '+p.position:''}</b>
+              <span class="badge" style="background:${p.isActive?'#1D9E75':'#5B6664'}">${p.isActive?'Aktif':'Nonaktif'}</span>
+            </div>
+            <p class="helper" style="margin:4px 0 8px;">${p.direction==='lower'?'Makin rendah makin baik':'Makin tinggi makin baik'} · unit: ${p.unit||'-'}</p>
+            <div style="display:flex;gap:4px;flex-wrap:wrap;margin-bottom:10px;">
+              ${ranges.map(r=>`<span class="badge" style="background:${catColor(r.category)}" title="${r.min}–${r.max}">${r.category}: ${r.score}</span>`).join("")}
+            </div>
+            <div style="display:flex;gap:6px;flex-wrap:wrap;">
+              <button class="btn ghost" style="flex:1;min-width:80px;" onclick="openModal('addScoringProfile','edit:${p.id}')">Edit</button>
+              <button class="btn ghost" style="flex:1;min-width:80px;" onclick="duplicateScoringProfile('${p.id}')">Salin ke Gender Lain</button>
+              <button class="btn ghost" style="flex:1;min-width:80px;" onclick="toggleScoringProfileActive('${p.id}', ${!p.isActive})">${p.isActive?'Nonaktifkan':'Aktifkan'}</button>
+              <span class="delete-link" style="align-self:center;" onclick="deleteScoringProfile('${p.id}')">🗑</span>
+            </div>
+          </div>
+        `;
+      }).join("")}
+    `).join("")}
+  `;
+}
+function scoringProfileFormFields(profile, prefillTestId, prefillGender){
+  const tests = loadDB(DB_KEYS.tests);
+  const testId = profile ? profile.testId : (prefillTestId || (tests[0] && tests[0].id) || "");
+  const test = tests.find(t=>t.id===testId);
+  const ranges = profile ? loadDB(DB_KEYS.scoringRanges).filter(r=>r.profileId===profile.id).sort((a,b)=>a.sortOrder-b.sortOrder) : [];
+  const rangeFor = cat => ranges.find(r=>r.category===cat);
+  return `
+    <div class="field"><label>Tes</label>
+      <select id="sp-test" ${profile?'disabled':''}>${tests.map(t=>`<option value="${t.id}" ${t.id===testId?'selected':''}>${t.name}</option>`).join("")}</select>
+    </div>
+    <div class="field-row">
+      <div class="field"><label>Gender</label>
+        <select id="sp-gender" ${profile?'disabled':''}>
+          ${["Male","Female","Any"].map(g=>`<option value="${g}" ${(profile?profile.gender:prefillGender)===g?'selected':''}>${g}</option>`).join("")}
+        </select>
+      </div>
+      <div class="field"><label>Age Group (opsional)</label>
+        <select id="sp-agegroup" ${profile?'disabled':''}>
+          <option value="">Semua umur</option>
+          ${["U15","U17","U19","Senior"].map(g=>`<option value="${g}" ${profile&&profile.ageGroup===g?'selected':''}>${g}</option>`).join("")}
+        </select>
+      </div>
+    </div>
+    <div class="field-row">
+      <div class="field"><label>Sport (opsional)</label><input id="sp-sport" value="${profile&&profile.sport?profile.sport:''}" placeholder="cth. Muaythai"/></div>
+      <div class="field"><label>Position (opsional)</label><input id="sp-position" value="${profile&&profile.position?profile.position:''}" placeholder="opsional"/></div>
+    </div>
+    <div class="field-row">
+      <div class="field"><label>Scoring Direction</label>
+        <select id="sp-direction">
+          <option value="higher" ${(profile?profile.direction:(test?test.direction:'higher'))==='higher'?'selected':''}>Higher is Better</option>
+          <option value="lower" ${(profile?profile.direction:(test?test.direction:'higher'))==='lower'?'selected':''}>Lower is Better</option>
+        </select>
+      </div>
+      <div class="field"><label>Unit</label><input id="sp-unit" value="${profile?profile.unit:(test?test.unit:'')}"/></div>
+    </div>
+    <label style="display:flex;align-items:center;gap:8px;font-size:12.5px;margin:6px 0 12px;">
+      <input type="checkbox" id="sp-active" ${!profile || profile.isActive ? 'checked' : ''}/> Aktif
+    </label>
+    <h2 class="page-title" style="margin-top:6px;">Range per Kategori</h2>
+    ${SCORE_CATEGORIES.map(cat=>{
+      const r = rangeFor(cat);
+      return `
+        <div class="field-row" style="align-items:flex-end;">
+          <div class="field" style="flex:0 0 90px;"><label>${cat}</label></div>
+          <div class="field"><label>Min</label><input type="number" step="0.01" class="sp-range-min" data-cat="${cat}" value="${r?r.min:''}"/></div>
+          <div class="field"><label>Max</label><input type="number" step="0.01" class="sp-range-max" data-cat="${cat}" value="${r?r.max:''}"/></div>
+          <div class="field"><label>Score</label><input type="number" min="0" max="100" class="sp-range-score" data-cat="${cat}" value="${r?r.score:SCORE_CATEGORY_DEFAULTS[cat]}"/></div>
+        </div>
+      `;
+    }).join("")}
+  `;
+}
+function modalAddScoringProfile(payload){
+  let profile = null, prefillTestId = "", prefillGender = "Male";
+  if(payload && payload.startsWith("edit:")){
+    profile = cache.scoringProfiles.find(p=>p.id===payload.slice(5));
+  } else if(payload && payload.includes("|")){
+    const parts = payload.split("|"); prefillTestId = parts[0]; prefillGender = parts[1];
+  }
+  return `
+    <div class="modal-head"><h3>${profile?'Edit':'Buat'} Standar Skor</h3><button class="close-x" onclick="closeModal()">✕</button></div>
+    ${scoringProfileFormFields(profile, prefillTestId, prefillGender)}
+    <div id="sp-err" class="err" style="display:none;margin-top:8px;"></div>
+    <button class="btn" style="margin-top:10px;" onclick="submitScoringProfile(${profile?`'${profile.id}'`:'null'})">Simpan Standar</button>
+  `;
+}
+function readScoringRangeInputs(){
+  return SCORE_CATEGORIES.map(cat=>{
+    const min = document.querySelector(`.sp-range-min[data-cat="${cat}"]`).value;
+    const max = document.querySelector(`.sp-range-max[data-cat="${cat}"]`).value;
+    const score = document.querySelector(`.sp-range-score[data-cat="${cat}"]`).value;
+    return { category: cat, min, max, score };
+  });
+}
+// spec #46 — validasi range sebelum simpan
+function validateScoringRanges(ranges){
+  for(const r of ranges){
+    if(r.min==="" || r.max==="" || r.score===""){ return `Lengkapi Min, Max, dan Score untuk kategori "${r.category}".`; }
+    if(isNaN(Number(r.min)) || isNaN(Number(r.max)) || isNaN(Number(r.score))){ return `Nilai pada kategori "${r.category}" harus berupa angka.`; }
+    if(Number(r.min) > Number(r.max)){ return `Kategori "${r.category}": Min tidak boleh lebih besar dari Max.`; }
+    if(Number(r.score) < 0 || Number(r.score) > 100){ return `Score kategori "${r.category}" harus antara 0-100.`; }
+  }
+  const sorted = ranges.slice().sort((a,b)=>Number(a.min)-Number(b.min));
+  for(let i=1;i<sorted.length;i++){
+    if(Number(sorted[i].min) <= Number(sorted[i-1].max)){
+      return `"${sorted[i-1].category}" range overlaps dengan "${sorted[i].category}" range.`;
+    }
+  }
+  return null;
+}
+async function submitScoringProfile(profileId){
+  const errBox = document.getElementById("sp-err");
+  const testId = document.getElementById("sp-test").value;
+  const gender = document.getElementById("sp-gender").value;
+  const ageGroup = document.getElementById("sp-agegroup").value || null;
+  const sport = document.getElementById("sp-sport").value.trim() || null;
+  const position = document.getElementById("sp-position").value.trim() || null;
+  const direction = document.getElementById("sp-direction").value;
+  const unit = document.getElementById("sp-unit").value.trim();
+  const isActive = document.getElementById("sp-active").checked;
+  const ranges = readScoringRangeInputs();
+
+  const rangeErr = validateScoringRanges(ranges);
+  if(rangeErr){ errBox.style.display="block"; errBox.textContent = rangeErr; return; }
+
+  // spec #46 — deteksi duplikat kombinasi test+gender+age+sport+position (kalau bikin baru)
+  if(!profileId){
+    const dup = loadDB(DB_KEYS.scoringProfiles).find(p =>
+      p.testId===testId && p.gender===gender && (p.ageGroup||null)===ageGroup &&
+      (p.sport||null)===sport && (p.position||null)===position
+    );
+    if(dup){ errBox.style.display="block"; errBox.textContent = "Standar dengan kombinasi test+gender+age group+sport+position ini sudah ada."; return; }
+  }
+  errBox.style.display="none";
+
+  let profileRowId = profileId;
+  if(profileId){
+    const { error } = await sb.from("test_scoring_profiles").update({
+      scoring_direction: direction === "lower" ? "lower_better" : "higher_better",
+      unit, is_active: isActive
+    }).eq("id", profileId);
+    if(error){ errBox.style.display="block"; errBox.textContent="Gagal menyimpan: " + error.message; return; }
+    await sb.from("test_scoring_ranges").delete().eq("scoring_profile_id", profileId);
+  } else {
+    const { data: row, error } = await sb.from("test_scoring_profiles").insert({
+      test_id: testId, gender, age_group: ageGroup, sport, position,
+      scoring_direction: direction === "lower" ? "lower_better" : "higher_better",
+      unit, is_active: isActive
+    }).select().single();
+    if(error){ errBox.style.display="block"; errBox.textContent="Gagal menyimpan: " + error.message; return; }
+    profileRowId = row.id;
+  }
+
+  const rangeRows = ranges.map((r,i)=>({
+    scoring_profile_id: profileRowId, category: r.category,
+    min_value: Number(r.min), max_value: Number(r.max), score: Number(r.score), sort_order: i
+  }));
+  const { error: errR } = await sb.from("test_scoring_ranges").insert(rangeRows);
+  if(errR){ errBox.style.display="block"; errBox.textContent="Gagal menyimpan range: " + errR.message; return; }
+
+  await refreshScoringProfiles();
+  await refreshScoringRanges();
+  closeModal(); render();
+  showToast("Standar skor tersimpan");
+}
+function duplicateScoringProfile(profileId){
+  const p = cache.scoringProfiles.find(x=>x.id===profileId);
+  if(!p) return;
+  const oppositeGender = p.gender === "Male" ? "Female" : p.gender === "Female" ? "Male" : "Any";
+  openModal("addScoringProfile", `${p.testId}|${oppositeGender}`);
+  // catatan: nilai range TIDAK ikut disalin otomatis (spec #44 minta admin
+  // review sebelum simpan) — admin isi ulang range untuk gender barunya.
+}
+async function toggleScoringProfileActive(profileId, newActive){
+  const { error } = await sb.from("test_scoring_profiles").update({ is_active: newActive }).eq("id", profileId);
+  if(error){ showToast("Gagal mengubah status: " + error.message); return; }
+  await refreshScoringProfiles();
+  render();
+}
+async function deleteScoringProfile(profileId){
+  if(!confirm("Hapus standar skor ini beserta seluruh range-nya?")) return;
+  const { error } = await sb.from("test_scoring_profiles").delete().eq("id", profileId);
+  if(error){ showToast("Gagal menghapus: " + error.message); return; }
+  await refreshScoringProfiles();
+  await refreshScoringRanges();
+  render();
+  showToast("Standar skor dihapus");
+}
+function exportScoringStandardsCSV(){
+  const rows = [["Test","Gender","Age Group","Sport","Position","Category","Min","Max","Score","Direction","Unit","Active"]];
+  loadDB(DB_KEYS.scoringProfiles).forEach(p=>{
+    const test = cache.tests.find(t=>t.id===p.testId);
+    loadDB(DB_KEYS.scoringRanges).filter(r=>r.profileId===p.id).sort((a,b)=>a.sortOrder-b.sortOrder).forEach(r=>{
+      rows.push([test?test.name:p.testId, p.gender, p.ageGroup||"", p.sport||"", p.position||"",
+        r.category, r.min, r.max, r.score, p.direction==='lower'?'LOWER_BETTER':'HIGHER_BETTER', p.unit||""]);
+    });
+  });
+  downloadCSV(rows, "scoring_standards.csv");
+}
+function modalImportScoringStandards(){
+  return `
+    <div class="modal-head"><h3>Import Standar Skor (CSV)</h3><button class="close-x" onclick="closeModal()">✕</button></div>
+    <p class="helper">Header: <b>Test,Gender,Age Group,Category,Min,Max,Score,Direction,Unit</b> (Sport & Position opsional, tambahkan kolom sesuai kebutuhan). Direction: HIGHER_BETTER atau LOWER_BETTER.</p>
+    <div class="field"><label>Pilih file CSV</label><input type="file" accept=".csv,text/csv" id="sci-file" onchange="handleScoringImportFile(event)"/></div>
+    <div class="field"><label>atau tempel data CSV</label><textarea id="sci-text" rows="6" placeholder="Test,Gender,Age Group,Category,Min,Max,Score,Direction,Unit"></textarea></div>
+    <button class="btn ghost" onclick="previewScoringImport()">Preview</button>
+    <div id="sci-preview" style="margin-top:10px;"></div>
+    <div id="sci-err" class="err" style="display:none;margin-top:8px;"></div>
+    <button class="btn" id="sci-confirm-btn" style="margin-top:10px;display:none;" onclick="confirmScoringImport()">Konfirmasi Import</button>
+  `;
+}
+function handleScoringImportFile(e){
+  const file = e.target.files[0]; if(!file) return;
+  const reader = new FileReader();
+  reader.onload = ev => { document.getElementById("sci-text").value = ev.target.result; };
+  reader.readAsText(file);
+}
+let scoringImportGroups = [];
+function previewScoringImport(){
+  const errBox = document.getElementById("sci-err");
+  const previewBox = document.getElementById("sci-preview");
+  const confirmBtn = document.getElementById("sci-confirm-btn");
+  errBox.style.display="none"; confirmBtn.style.display="none"; previewBox.innerHTML="";
+  const text = document.getElementById("sci-text").value.trim();
+  if(!text){ errBox.style.display="block"; errBox.textContent="Tempel atau unggah data CSV dulu."; return; }
+
+  const rows = parseCSV(text);
+  const header = rows[0].map(h=>h.trim().toLowerCase());
+  const col = k => header.indexOf(k);
+  const need = ["test","gender","category","min","max","score","direction"];
+  if(need.some(k=>col(k)===-1)){ errBox.style.display="block"; errBox.textContent="Header CSV wajib memuat: Test, Gender, Category, Min, Max, Score, Direction."; return; }
+
+  const problems = [];
+  const flatRows = [];
+  for(let i=1;i<rows.length;i++){
+    const r = rows[i]; if(r.every(c=>c==="")) continue;
+    const testName = r[col("test")];
+    const test = cache.tests.find(t=>t.name.toLowerCase()===testName.toLowerCase());
+    if(!test){ problems.push(`Baris ${i+1}: tes "${testName}" tidak ditemukan, dilewati.`); continue; }
+    const gender = r[col("gender")];
+    if(!["Male","Female","Any"].includes(gender)){ problems.push(`Baris ${i+1}: gender "${gender}" tidak valid, dilewati.`); continue; }
+    const category = r[col("category")];
+    if(!SCORE_CATEGORIES.includes(category)){ problems.push(`Baris ${i+1}: category "${category}" tidak valid, dilewati.`); continue; }
+    const direction = r[col("direction")];
+    if(!["HIGHER_BETTER","LOWER_BETTER"].includes(direction)){ problems.push(`Baris ${i+1}: direction "${direction}" tidak valid, dilewati.`); continue; }
+    const min = Number(r[col("min")]), max = Number(r[col("max")]), score = Number(r[col("score")]);
+    if(isNaN(min) || isNaN(max) || isNaN(score) || min > max){ problems.push(`Baris ${i+1}: Min/Max/Score tidak valid.`); continue; }
+    flatRows.push({
+      testId: test.id, testName: test.name, gender,
+      ageGroup: col("age group")>=0 ? (r[col("age group")]||null) : null,
+      sport: col("sport")>=0 ? (r[col("sport")]||null) : null,
+      position: col("position")>=0 ? (r[col("position")]||null) : null,
+      category, min, max, score,
+      direction: direction === "LOWER_BETTER" ? "lower_better" : "higher_better",
+      unit: col("unit")>=0 ? (r[col("unit")]||"") : ""
+    });
+  }
+
+  // group jadi per-profile (test+gender+age+sport+position)
+  const groups = {};
+  flatRows.forEach(r=>{
+    const key = [r.testId,r.gender,r.ageGroup,r.sport,r.position].join("::");
+    if(!groups[key]) groups[key] = { testId:r.testId, testName:r.testName, gender:r.gender, ageGroup:r.ageGroup, sport:r.sport, position:r.position, direction:r.direction, unit:r.unit, ranges:[] };
+    groups[key].ranges.push({ category:r.category, min:r.min, max:r.max, score:r.score });
+  });
+  Object.values(groups).forEach(g=>{
+    const err = validateScoringRanges(g.ranges.map(r=>({category:r.category,min:String(r.min),max:String(r.max),score:String(r.score)})));
+    if(err) problems.push(`${g.testName} ${g.gender}${g.ageGroup?' '+g.ageGroup:''}: ${err}`);
+    const existing = loadDB(DB_KEYS.scoringProfiles).find(p=>p.testId===g.testId && p.gender===g.gender && (p.ageGroup||null)===(g.ageGroup||null) && (p.sport||null)===(g.sport||null) && (p.position||null)===(g.position||null));
+    g.willUpdate = !!existing; g.existingId = existing ? existing.id : null;
+  });
+
+  scoringImportGroups = Object.values(groups).filter(g=>!problems.some(p=>p.startsWith(g.testName)&&p.includes('overlap')));
+  previewBox.innerHTML = `
+    <p class="helper">${scoringImportGroups.length} standar siap diimport (${scoringImportGroups.filter(g=>g.willUpdate).length} akan menimpa standar yang sudah ada).</p>
+    <div class="card-list" style="max-height:220px;overflow:auto;">
+      ${scoringImportGroups.map(g=>`<div class="history-row"><div class="h-left"><b>${g.testName} · ${g.gender}${g.ageGroup?' · '+g.ageGroup:''}</b><span>${g.ranges.length} kategori ${g.willUpdate?'· akan menimpa standar lama':''}</span></div></div>`).join("")}
+    </div>
+    ${problems.length ? `<div class="err" style="display:block;margin-top:8px;">${problems.join("<br/>")}</div>` : ""}
+  `;
+  if(scoringImportGroups.length) confirmBtn.style.display = "block";
+}
+async function confirmScoringImport(){
+  const errBox = document.getElementById("sci-err");
+  const confirmBtn = document.getElementById("sci-confirm-btn");
+  confirmBtn.disabled = true; confirmBtn.textContent = "Mengimport...";
+  for(const g of scoringImportGroups){
+    let profileId = g.existingId;
+    if(profileId){
+      await sb.from("test_scoring_profiles").update({ scoring_direction: g.direction, unit: g.unit, is_active: true }).eq("id", profileId);
+      await sb.from("test_scoring_ranges").delete().eq("scoring_profile_id", profileId);
+    } else {
+      const { data: row, error } = await sb.from("test_scoring_profiles").insert({
+        test_id: g.testId, gender: g.gender, age_group: g.ageGroup, sport: g.sport, position: g.position,
+        scoring_direction: g.direction, unit: g.unit, is_active: true
+      }).select().single();
+      if(error){ errBox.style.display="block"; errBox.textContent="Gagal import "+g.testName+": "+error.message; confirmBtn.disabled=false; confirmBtn.textContent="Konfirmasi Import"; return; }
+      profileId = row.id;
+    }
+    const rangeRows = g.ranges.map((r,i)=>({ scoring_profile_id: profileId, category:r.category, min_value:r.min, max_value:r.max, score:r.score, sort_order:i }));
+    await sb.from("test_scoring_ranges").insert(rangeRows);
+  }
+  scoringImportGroups = [];
+  await refreshScoringProfiles();
+  await refreshScoringRanges();
+  closeModal(); render();
+  showToast("Standar skor berhasil diimport");
 }
 
 /* ---------------- KATEGORI TES / TEST BATTERY ---------------- */
@@ -1643,14 +2061,7 @@ function modalAddTest(){
       </div>
     </div>
     <div class="field"><label>Deskripsi singkat</label><input id="f-desc" placeholder="Mengukur kekuatan otot lengan"/></div>
-    <div class="field-row">
-      <div class="field"><label>Ambang Poor</label><input id="f-poor" type="number" step="0.1"/></div>
-      <div class="field"><label>Ambang Average</label><input id="f-average" type="number" step="0.1"/></div>
-    </div>
-    <div class="field-row">
-      <div class="field"><label>Ambang Good</label><input id="f-good" type="number" step="0.1"/></div>
-      <div class="field"><label>Ambang Elite</label><input id="f-elite" type="number" step="0.1"/></div>
-    </div>
+    <p class="helper">Standar skor per gender/umur (Poor–Elite) diatur terpisah lewat Admin Panel → Standar Skor, setelah tes ini dibuat.</p>
     <div id="f-err" class="err" style="display:none;"></div>
     <button class="btn" onclick="submitAddTest()">Simpan Kategori Tes</button>
   `;
@@ -1661,20 +2072,15 @@ async function submitAddTest(){
   const unit = document.getElementById("f-unit").value.trim();
   const direction = document.getElementById("f-direction").value;
   const desc = document.getElementById("f-desc").value.trim();
-  const poor = document.getElementById("f-poor").value, average = document.getElementById("f-average").value;
-  const good = document.getElementById("f-good").value, elite = document.getElementById("f-elite").value;
   const errBox = document.getElementById("f-err");
-  if(!name || !unit || poor==="" || average==="" || good==="" || elite===""){
-    errBox.style.display="block"; errBox.textContent="Lengkapi nama, satuan, dan keempat ambang batas."; return;
+  if(!name || !unit){
+    errBox.style.display="block"; errBox.textContent="Lengkapi nama dan satuan tes."; return;
   }
   const { data: testRow, error } = await sb.from("tests").insert({
     category_id: categoryId, name, slug: slugify(name), unit,
     higher_is_better: direction === "higher", description: desc
   }).select().single();
   if(error){ errBox.style.display="block"; errBox.textContent="Gagal menyimpan: " + error.message; return; }
-  await sb.from("test_benchmarks").insert({
-    test_id: testRow.id, poor:Number(poor), average:Number(average), good:Number(good), elite:Number(elite)
-  });
   await refreshTests();
   closeModal(); setTab("tests");
   showToast("Kategori tes tersimpan");
@@ -1715,9 +2121,9 @@ function viewTestBattery(){
   `;
 }
 function batterySessionScore(sessionId){
-  const results = loadDB(DB_KEYS.assessments).filter(x=>x.batterySessionId===sessionId);
+  const results = loadDB(DB_KEYS.assessments).filter(x=>x.batterySessionId===sessionId && x.score!=null);
   if(results.length===0) return null;
-  const vals = results.map(r=>CATEGORY_NUMERIC[r.category] ?? 50);
+  const vals = results.map(r=>r.score);
   return Math.round(vals.reduce((a,b)=>a+b,0)/vals.length);
 }
 function modalCreateBattery(){
@@ -1769,6 +2175,7 @@ function modalRunBattery(batteryId){
       return `<div class="field"><label>${t?t.name:'Tes'} (${t?t.unit:''})</label><input type="number" step="0.1" class="rb-score" data-test="${testId}"/></div>`;
     }).join("")}
     <div class="field"><label>Catatan (opsional)</label><input id="rb-notes" type="text"/></div>
+    <p class="helper">Skor & kategori dihitung otomatis berdasarkan standar gender/umur atlet. Tes tanpa standar yang cocok akan tersimpan tanpa skor (bukan dikarang).</p>
     <div id="rb-err" class="err" style="display:none;"></div>
     <button class="btn" onclick="submitBatterySession('${batteryId}')">Simpan Hasil Battery</button>
   `;
@@ -1792,13 +2199,18 @@ async function submitBatterySession(batteryId){
 
   for(const e of entries){
     const test = cache.tests.find(t=>t.id===e.testId);
+    const athlete = cache.athletes.find(x=>x.id===athleteId);
+    const result = scoreResult(e.testId, athlete, e.value);
     const { data: assessRow, error: err1 } = await sb.from("assessments").insert({
       athlete_id: athleteId, assessment_name: `${test.name} - Battery - ${dateVal}`,
       assessment_date: dateVal, assessment_type: "battery", battery_session_id: sessionRow.id
     }).select().single();
     if(err1){ errBox.style.display="block"; errBox.textContent="Gagal menyimpan hasil: " + err1.message; return; }
     const { error: err2 } = await sb.from("performance_results").insert({
-      assessment_id: assessRow.id, athlete_id: athleteId, test_id: e.testId, value: Number(e.value), unit: test.unit
+      assessment_id: assessRow.id, athlete_id: athleteId, test_id: e.testId, value: Number(e.value), unit: test.unit,
+      computed_score: result ? result.score : null,
+      computed_category: result ? result.category : null,
+      scoring_profile_id: result ? result.profile.id : null
     });
     if(err2){ errBox.style.display="block"; errBox.textContent="Gagal menyimpan hasil: " + err2.message; return; }
   }
@@ -2108,7 +2520,7 @@ function viewAthleteDetail(){
 function athleteOverview(a){
   const all = loadDB(DB_KEYS.assessments).filter(x=>x.athleteId===a.id);
   const injuries = loadDB(DB_KEYS.injuries).filter(x=>x.athleteId===a.id);
-  const dist = {Poor:0,Average:0,Good:0,Elite:0};
+  const dist = {Poor:0,"Below Average":0,Average:0,Good:0,Excellent:0,Elite:0};
   all.forEach(x=>{ if(dist[x.category]!==undefined) dist[x.category]++; });
   return `
     <div class="stat-grid">
@@ -2163,6 +2575,14 @@ function athletePerformanceSection(a){
   const testsWithData = tests.filter(t=>all.some(x=>x.testId===t.id));
   if(!state.profileTestId && testsWithData.length>0) state.profileTestId = testsWithData[0].id;
   if(testsWithData.length===0) return `<div class="chart-card"><div class="chart-empty">Belum ada hasil tes untuk atlet ini.</div></div>`;
+
+  const test = tests.find(t=>t.id===state.profileTestId);
+  const rows = all.filter(x=>x.testId===state.profileTestId).sort((x,y)=>y.date-x.date); // terbaru dulu untuk tabel
+  const direction = (rows.find(r=>r.scoringProfileId) && cache.scoringProfiles.find(p=>p.id===rows.find(r=>r.scoringProfileId).scoringProfileId))
+    ? cache.scoringProfiles.find(p=>p.id===rows.find(r=>r.scoringProfileId).scoringProfileId).direction
+    : test.direction;
+  const hasAnyScore = rows.some(r=>r.score!=null);
+
   return `
     <div class="chart-card">
       <h3>Grafik Progres per Tes</h3>
@@ -2173,6 +2593,26 @@ function athletePerformanceSection(a){
       </div>
       <canvas id="chart-profile" height="180"></canvas>
     </div>
+    ${hasAnyScore ? `
+      <div class="chart-card" style="margin-top:14px;">
+        <h3>Score Trend (0-100)</h3>
+        <canvas id="chart-score-trend" height="180"></canvas>
+      </div>
+    ` : `<div class="chart-empty" style="margin-top:14px;">Belum ada standar skor untuk tes ini — Score Trend akan muncul setelah standar dikonfigurasi Admin.</div>`}
+
+    <h2 class="page-title" style="margin-top:16px;">Test History</h2>
+    ${rows.map((r,idx)=>{
+      const isPB = isPersonalBest(rows, idx, direction);
+      return `
+        <div class="history-row">
+          <div class="h-left">
+            <b>${new Date(r.date).toLocaleDateString("id-ID",{day:"2-digit",month:"short",year:"numeric"})} ${isPB?'<span class="badge" style="background:#1D9E75;margin-left:4px;">PB</span>':''}</b>
+            <span>Result: ${r.rawScore} ${test.unit}${r.score!=null?` · Score: ${r.score}/100`:' · Belum ada skor'}</span>
+          </div>
+          ${r.category ? `<span class="badge" style="background:${catColor(r.category)}">${r.category}</span>` : ""}
+        </div>
+      `;
+    }).join("")}
   `;
 }
 function drawProfileChart(){
@@ -2182,11 +2622,24 @@ function drawProfileChart(){
   const rows = loadDB(DB_KEYS.assessments).filter(a=>a.athleteId===state.athleteId && a.testId===test.id).sort((a,b)=>a.date-b.date);
   const labels = rows.map(a=>new Date(a.date).toLocaleDateString("id-ID",{day:"2-digit",month:"short"}));
   const data = rows.map(a=>a.rawScore);
-  const pointColors = rows.map(a=>catColor(a.category));
+  const pointColors = rows.map(a=>a.category ? catColor(a.category) : "#5B6664");
   chartInstances["chart-profile"] = new Chart(canvas, {
     type:"line",
     data:{ labels, datasets:[{ label:`${test.name} (${test.unit})`, data, borderColor:"#20B2AA", backgroundColor:"rgba(32,178,170,0.08)", pointBackgroundColor:pointColors, pointRadius:5, pointHoverRadius:6, tension:0.25, fill:true }] },
     options:{ responsive:true, plugins:{legend:{display:false}}, scales:{ y:{ticks:{font:{size:10}}}, x:{ticks:{font:{size:10}}} } }
+  });
+}
+function drawScoreTrendChart(){
+  destroyChart("chart-score-trend");
+  const canvas = document.getElementById("chart-score-trend"); if(!canvas) return;
+  const rows = loadDB(DB_KEYS.assessments).filter(a=>a.athleteId===state.athleteId && a.testId===state.profileTestId && a.score!=null).sort((a,b)=>a.date-b.date);
+  if(rows.length===0) return;
+  const labels = rows.map(a=>new Date(a.date).toLocaleDateString("id-ID",{day:"2-digit",month:"short"}));
+  const data = rows.map(a=>a.score);
+  chartInstances["chart-score-trend"] = new Chart(canvas, {
+    type:"line",
+    data:{ labels, datasets:[{ label:"Score", data, borderColor:"#159A94", backgroundColor:"rgba(21,154,148,0.1)", pointRadius:4, tension:0.25, fill:true }] },
+    options:{ responsive:true, plugins:{legend:{display:false}}, scales:{ y:{min:0,max:100,ticks:{font:{size:10}}}, x:{ticks:{font:{size:10}}} } }
   });
 }
 
@@ -3118,18 +3571,39 @@ function modalAddAssessment(athleteId){
     </div>
     <div class="field"><label>Skor mentah</label><input id="in-score" type="number" step="0.1" placeholder="Masukkan angka hasil tes"/></div>
     <div id="in-err" class="err" style="display:none;"></div>
-    <button class="btn" onclick="submitAssessment('${athleteId}')">Simpan Hasil Tes</button>
+    <button class="btn" id="in-submit-btn" onclick="submitAssessment('${athleteId}')">Simpan Hasil Tes</button>
     <div id="in-result"></div>
   `;
 }
 async function submitAssessment(athleteId){
   const testId = document.getElementById("in-test").value;
-  const score = document.getElementById("in-score").value;
+  const scoreInput = document.getElementById("in-score").value;
   const errBox = document.getElementById("in-err");
-  if(score==="" || isNaN(Number(score))){ errBox.style.display="block"; errBox.textContent="Masukkan skor hasil tes yang valid."; return; }
-  errBox.style.display="none";
+  const resultBox = document.getElementById("in-result");
+  if(scoreInput==="" || isNaN(Number(scoreInput))){ errBox.style.display="block"; errBox.textContent="Masukkan skor hasil tes yang valid."; return; }
+  errBox.style.display="none"; resultBox.innerHTML = "";
+
   const test = cache.tests.find(t=>t.id===testId);
-  const category = computeCategory(test, score);
+  const athlete = cache.athletes.find(a=>a.id===athleteId);
+  const result = scoreResult(testId, athlete, scoreInput);
+
+  if(!result){
+    // spec #39 — tidak ada standard yang cocok untuk gender/umur atlet ini.
+    // Jangan bikin skor palsu; kasih pilihan ke user.
+    resultBox.innerHTML = `
+      <div class="err" style="display:block;">No scoring standard available for this athlete (${athleteGenderLabel(athlete)}${ageGroupFor(athlete.age)?', '+ageGroupFor(athlete.age):''}) untuk tes "${test.name}".</div>
+      <div style="display:flex;gap:8px;margin-top:8px;">
+        ${isAdmin() ? `<button class="btn ghost" style="flex:1;" onclick="closeModal(); openAdminPanel(); setAdminSection('scoring'); openModal('addScoringProfile','${testId}|${athlete.gender==='P'?'Female':'Male'}');">Configure Standard</button>` : ""}
+        <button class="btn" style="flex:1;" onclick="submitAssessmentFinal('${athleteId}','${testId}', ${Number(scoreInput)}, null)">Save Result Without Score</button>
+      </div>
+    `;
+    return;
+  }
+  await submitAssessmentFinal(athleteId, testId, scoreInput, result);
+}
+async function submitAssessmentFinal(athleteId, testId, scoreInput, result){
+  const errBox = document.getElementById("in-err");
+  const test = cache.tests.find(t=>t.id===testId);
   const today = new Date().toISOString().slice(0,10);
 
   const { data: assessRow, error: err1 } = await sb.from("assessments").insert({
@@ -3140,13 +3614,23 @@ async function submitAssessment(athleteId){
 
   const { error: err2 } = await sb.from("performance_results").insert({
     assessment_id: assessRow.id, athlete_id: athleteId, test_id: testId,
-    value: Number(score), unit: test.unit
+    value: Number(scoreInput), unit: test.unit,
+    computed_score: result ? result.score : null,
+    computed_category: result ? result.category : null,
+    scoring_profile_id: result ? result.profile.id : null
   });
   if(err2){ errBox.style.display="block"; errBox.textContent="Gagal menyimpan: " + err2.message; return; }
 
+  // cek Personal Best (arah dari scoring profile kalau ada, fallback ke arah test lama)
+  const direction = result ? result.profile.direction : test.direction;
+  const priorRows = loadDB(DB_KEYS.assessments).filter(x=>x.athleteId===athleteId && x.testId===testId);
+  const isPB = priorRows.length===0 || (direction==="lower"
+    ? Number(scoreInput) <= Math.min(...priorRows.map(r=>r.rawScore))
+    : Number(scoreInput) >= Math.max(...priorRows.map(r=>r.rawScore)));
+
   await refreshAssessments();
   closeModal(); state.athleteSection="overview"; render();
-  showToast(`Tersimpan · ${category}`);
+  showToast(result ? `Tersimpan · ${result.category} (${result.score}/100)${isPB?' · PB baru!':''}` : `Tersimpan tanpa skor${isPB?' · PB baru!':''}`);
 }
 
 /* ---------------- RIWAYAT (semua atlet) ---------------- */
@@ -3694,6 +4178,8 @@ function renderModal(){
   if(state.modal.name==="addCompetition") modal.innerHTML = modalAddCompetition();
   if(state.modal.name==="addParticipant") modal.innerHTML = modalAddParticipant(state.modal.payload);
   if(state.modal.name==="importAthletes") modal.innerHTML = modalImportAthletes();
+  if(state.modal.name==="addScoringProfile") modal.innerHTML = modalAddScoringProfile(state.modal.payload);
+  if(state.modal.name==="importScoringStandards") modal.innerHTML = modalImportScoringStandards();
   if(state.modal.name==="backup") modal.innerHTML = modalBackup();
   if(state.modal.name==="addMasterplan") modal.innerHTML = modalAddMasterplan();
   if(state.modal.name==="addWeeklyLog") modal.innerHTML = modalAddWeeklyLog(state.modal.payload);
