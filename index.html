@@ -1073,10 +1073,12 @@ let state = {
   calendarFilters:{ athleteId:"", type:"" },
   competitionId:null,
   adminSection:"roles", auditFilter:"",
-  loadPeriod:7
+  loadPeriod:7,
+  dpWeekStart:null, dpSelectedDate:null
 };
 let chartInstances = {};
 let tlDraft = null; // draft state form "Catat Sesi Latihan" (Training Load)
+let dpDraft = null; // draft state builder "Daily Session Plan"
 function destroyChart(id){ if(chartInstances[id]){ chartInstances[id].destroy(); delete chartInstances[id]; } }
 
 /* ---------------- ROLE & PERMISSION (frontend gating) ----------------
@@ -2522,7 +2524,10 @@ function athleteOverview(a){
   const injuries = loadDB(DB_KEYS.injuries).filter(x=>x.athleteId===a.id);
   const dist = {Poor:0,"Below Average":0,Average:0,Good:0,Excellent:0,Elite:0};
   all.forEach(x=>{ if(dist[x.category]!==undefined) dist[x.category]++; });
+  const mpList = loadMasterplans().filter(m=>m.athleteId===a.id).sort((x,y)=>y.createdAt-x.createdAt);
+  const mp = mpList[0] || null;
   return `
+    ${mp ? todaysSessionWidget(mp) : ""}
     <div class="stat-grid">
       <div class="stat-card"><div class="label">TOTAL HASIL TES</div><div class="value">${all.length}</div></div>
       <div class="stat-card"><div class="label">CEDERA TERCATAT</div><div class="value" style="color:var(--poor)">${injuries.length}</div></div>
@@ -3297,16 +3302,27 @@ function athleteLoadSection(a){
     ${rows.length===0 ? "" : `
       <h2 class="page-title" style="margin-top:20px;">Riwayat Sesi</h2>
       ${rows.slice(0,20).map(r=>`
-        <div class="history-row">
+        <div class="history-row" style="${isStaff()?'align-items:flex-start;':''}">
           <div class="h-left">
             <b>${r.trainingType} · ${new Date(r.date).toLocaleDateString("id-ID",{day:"2-digit",month:"short",year:"numeric"})}</b>
             <span>${r.duration} menit × RPE ${r.rpe}${r.volumeLoad>0?` · Volume ${Math.round(r.volumeLoad)} kg`:""}</span>
           </div>
-          <span class="badge" style="background:#159A94">${Math.round(r.load)} AU</span>
+          <div style="display:flex;align-items:center;gap:8px;">
+            <span class="badge" style="background:#159A94">${Math.round(r.load)} AU</span>
+            ${isStaff() ? `<span class="delete-link" style="margin:0;" onclick="deleteTrainingSession('${r.id}','${a.id}')" title="Hapus sesi ini">🗑</span>` : ""}
+          </div>
         </div>
       `).join("")}
     `}
   `;
+}
+async function deleteTrainingSession(sessionId, athleteId){
+  if(!confirm("Hapus sesi latihan ini? Beban latihan (ACWR, load trend, dsb) akan dihitung ulang otomatis tanpa data ini. Tindakan tidak dapat dibatalkan.")) return;
+  const { error } = await sb.from("training_sessions").delete().eq("id", sessionId);
+  if(error){ showToast("Gagal menghapus sesi: " + error.message); return; }
+  await refreshTrainingLoad();
+  render();
+  showToast("Sesi latihan dihapus");
 }
 function drawLoadChart(){
   destroyChart("chart-load");
@@ -3836,6 +3852,397 @@ function currentWeekOf(mp){
 function mesoForWeek(mp, week){ return mp.mesocycles.find(m => week >= m.weekStart && week <= m.weekEnd); }
 function phaseForWeek(mp, week){ return mp.phases.find(p => week >= p.weekStart && week <= p.weekEnd); }
 
+/* ==========================================================
+   DAILY TRAINING PLANNER
+   Menggunakan struktur Master Plan yang sudah ada (mp.dailyPlans,
+   disimpan di object masterplan yang sama di localStorage) —
+   tidak membuat sistem database terpisah.
+========================================================== */
+const DP_BLOCK_CATEGORIES = ["Warm Up","Strength","Conditioning","Combat","Other"];
+const DP_COMBAT_TYPES = ["Muay Thai","Kickboxing","Sparring","Pad Work","Heavy Bag","Technical Training"];
+function todayISO(){ return new Date().toISOString().slice(0,10); }
+function dpFmtDate(dateStr){ return new Date(dateStr+"T00:00:00").toLocaleDateString("id-ID",{weekday:"long", day:"2-digit", month:"short"}); }
+function dpDayName(dateStr){ return new Date(dateStr+"T00:00:00").toLocaleDateString("id-ID",{weekday:"short"}); }
+function mondayOf(dateStr){
+  const d = new Date(dateStr+"T00:00:00");
+  const day = d.getDay(); // 0=Minggu
+  const diff = (day===0 ? -6 : 1-day);
+  d.setDate(d.getDate()+diff);
+  return d.toISOString().slice(0,10);
+}
+function addDaysISO(dateStr, n){
+  const d = new Date(dateStr+"T00:00:00"); d.setDate(d.getDate()+n);
+  return d.toISOString().slice(0,10);
+}
+function weekDatesFrom(mondayStr){ return Array.from({length:7}, (_,i)=>addDaysISO(mondayStr, i)); }
+function emptyDpExercise(){
+  return { id: genId("ex"), name:"", category:"", sets:"", reps:"", duration:"", distance:"",
+    load:"", pct1rm:"", rpeTarget:"", rirTarget:"", rest:"", tempo:"", notes:"", completed:false,
+    rounds:"", roundDuration:"", restDuration:"", trainingType:"", intensity:"" };
+}
+function emptyDpBlock(category){ return { id: genId("blk"), category, exercises: [] }; }
+function emptyDailyPlan(dateStr){
+  return {
+    date: dateStr, title:"", isRestDay:false,
+    blocks: DP_BLOCK_CATEGORIES.map(c=>emptyDpBlock(c)),
+    status:"planned", completedAt:null, actualDuration:null, actualRPE:null, notes:""
+  };
+}
+function getDailyPlan(mp, dateStr){ return (mp.dailyPlans && mp.dailyPlans[dateStr]) || null; }
+function saveDailyPlan(mpId, plan){
+  const list = loadMasterplans();
+  const mp = list.find(m=>m.id===mpId); if(!mp) return;
+  mp.dailyPlans = mp.dailyPlans || {};
+  mp.dailyPlans[plan.date] = plan;
+  saveMasterplans(list);
+}
+function deleteDailyPlan(mpId, dateStr){
+  if(!confirm("Hapus rencana sesi untuk hari ini?")) return;
+  const list = loadMasterplans();
+  const mp = list.find(m=>m.id===mpId); if(!mp) return;
+  if(mp.dailyPlans) delete mp.dailyPlans[dateStr];
+  saveMasterplans(list);
+  render();
+}
+
+/* ---- Widget "Today's Session" (dipakai di Ringkasan Atlet & Daily Planner) ---- */
+function todaysSessionWidget(mp){
+  const date = todayISO();
+  const plan = getDailyPlan(mp, date);
+  return `
+    <div class="chart-card" style="margin-bottom:16px;">
+      <h3>Today's Session</h3>
+      <p class="helper" style="margin:0 0 10px;">${dpFmtDate(date)}</p>
+      ${dpPlanBody(mp, plan, date, true)}
+    </div>
+  `;
+}
+
+/* ---- Isi/preview sebuah rencana sesi (dipakai di widget & di Daily Planner) ---- */
+function dpPlanBody(mp, plan, dateStr, compact){
+  if(!plan){
+    return `
+      <div class="chart-empty">Belum ada rencana sesi untuk tanggal ini.</div>
+      ${isStaff() ? `<button class="btn ghost" style="margin-top:10px;" onclick="openDailyPlanBuilder('${mp.id}','${dateStr}')">+ Buat Rencana Sesi</button>` : ""}
+    `;
+  }
+  if(plan.isRestDay){
+    return `<div class="chart-empty">🛌 Rest Day${plan.notes?` — ${plan.notes}`:""}</div>
+      ${isStaff() ? `<button class="btn ghost" style="margin-top:10px;" onclick="openDailyPlanBuilder('${mp.id}','${dateStr}')">Edit Rencana</button>` : ""}`;
+  }
+  const blocks = plan.blocks.filter(b=>b.exercises.length>0);
+  return `
+    <p style="margin:0 0 10px;font-weight:700;font-size:14.5px;">${plan.title || "Sesi Latihan"}
+      ${plan.status==='completed' ? `<span class="status-pill" style="background:var(--good);margin-left:8px;">Selesai</span>` : ""}
+    </p>
+    ${blocks.length===0 ? `<p class="helper">Belum ada exercise ditambahkan.</p>` : blocks.map(b=>dpBlockView(mp.id, dateStr, b, plan.status==='completed')).join("")}
+    ${plan.status==='completed' ? `
+      <div class="helper" style="margin-top:8px;">Actual: <b>${plan.actualDuration||0} menit</b> · Session RPE <b>${plan.actualRPE||'-'}</b></div>
+    ` : `
+      ${!compact && isStaff() ? `<button class="btn ghost" style="margin-top:6px;" onclick="openDailyPlanBuilder('${mp.id}','${dateStr}')">Edit Rencana</button>` : ""}
+      ${blocks.length>0 ? `<button class="btn" style="margin-top:10px;" onclick="openCompleteSessionModal('${mp.id}','${dateStr}')">✓ Tandai Sesi Selesai</button>` : ""}
+    `}
+  `;
+}
+function dpExerciseLine(ex, category){
+  if(category==="Combat"){
+    const parts = [];
+    if(ex.rounds) parts.push(`${ex.rounds} × ${ex.roundDuration||'?'} min`);
+    if(ex.restDuration) parts.push(`Rest ${ex.restDuration}`);
+    if(ex.intensity) parts.push(`Intensity ${ex.intensity}`);
+    if(ex.rpeTarget) parts.push(`RPE ${ex.rpeTarget}`);
+    return `<b>${ex.name}</b>${ex.trainingType?` (${ex.trainingType})`:""}${parts.length?` — ${parts.join(" · ")}`:""}`;
+  }
+  const parts = [];
+  if(ex.sets && ex.reps) parts.push(`${ex.sets} × ${ex.reps}`);
+  else if(ex.sets && ex.duration) parts.push(`${ex.sets} × ${ex.duration}`);
+  else if(ex.duration) parts.push(`${ex.duration}`);
+  if(ex.distance) parts.push(`${ex.distance}`);
+  if(ex.load) parts.push(`${ex.load} kg`);
+  if(ex.pct1rm) parts.push(`@${ex.pct1rm}%`);
+  if(ex.rest) parts.push(`rest ${ex.rest}`);
+  if(ex.rpeTarget) parts.push(`RPE ${ex.rpeTarget}`);
+  if(ex.rirTarget) parts.push(`RIR ${ex.rirTarget}`);
+  return `<b>${ex.name}</b>${parts.length?` — ${parts.join(" · ")}`:""}`;
+}
+function dpBlockView(mpId, dateStr, block, readOnly){
+  return `
+    <div style="margin-bottom:10px;">
+      <p style="margin:0 0 4px;font-weight:700;font-size:12.5px;color:var(--turquoise);text-transform:uppercase;">${block.category}</p>
+      <ol style="margin:0;padding-left:18px;">
+        ${block.exercises.map(ex => `
+          <li style="margin-bottom:4px;font-size:13px;display:flex;align-items:flex-start;gap:6px;">
+            ${readOnly ? "" : `<input type="checkbox" ${ex.completed?'checked':''} onchange="toggleDpExerciseComplete('${mpId}','${dateStr}','${block.id}','${ex.id}')" style="margin-top:3px;"/>`}
+            <span style="${ex.completed?'text-decoration:line-through;color:var(--muted);':''}">${dpExerciseLine(ex, block.category)}</span>
+          </li>
+        `).join("")}
+      </ol>
+      ${block.exercises.some(e=>e.notes) ? `<p class="helper" style="margin:2px 0 0;">${block.exercises.filter(e=>e.notes).map(e=>e.notes).join(" · ")}</p>` : ""}
+    </div>
+  `;
+}
+function toggleDpExerciseComplete(mpId, dateStr, blockId, exId){
+  const list = loadMasterplans();
+  const mp = list.find(m=>m.id===mpId); if(!mp) return;
+  const plan = mp.dailyPlans && mp.dailyPlans[dateStr]; if(!plan) return;
+  const block = plan.blocks.find(b=>b.id===blockId); if(!block) return;
+  const ex = block.exercises.find(e=>e.id===exId); if(!ex) return;
+  ex.completed = !ex.completed;
+  saveMasterplans(list);
+  render();
+}
+
+/* ---- Section: Daily Planner (week strip + detail hari terpilih) ---- */
+function mpDailySection(mp, wk){
+  if(!state.dpWeekStart) state.dpWeekStart = mondayOf(todayISO());
+  if(!state.dpSelectedDate) state.dpSelectedDate = todayISO();
+  const monday = state.dpWeekStart;
+  const dates = weekDatesFrom(monday);
+  const selected = state.dpSelectedDate;
+  const plan = getDailyPlan(mp, selected);
+  return `
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;">
+      <button class="btn ghost" style="width:auto;padding:4px 10px;" onclick="dpChangeWeek('${mp.id}',-1)">‹ Minggu Lalu</button>
+      <span class="helper" style="margin:0;">${dpFmtDate(dates[0]).split(',')[1]||''} – ${dpFmtDate(dates[6]).split(',')[1]||''}</span>
+      <button class="btn ghost" style="width:auto;padding:4px 10px;" onclick="dpChangeWeek('${mp.id}',1)">Minggu Depan ›</button>
+    </div>
+    <div style="display:flex;gap:6px;margin-bottom:16px;overflow-x:auto;">
+      ${dates.map(d=>{
+        const p = getDailyPlan(mp, d);
+        const isToday = d===todayISO();
+        const isSel = d===selected;
+        const dot = p ? (p.isRestDay ? "🛌" : (p.status==='completed' ? "✅" : "🔵")) : "";
+        return `
+          <div onclick="dpSelectDate('${d}')" style="flex:1;min-width:44px;text-align:center;padding:8px 4px;border-radius:10px;cursor:pointer;
+            background:${isSel?'var(--turquoise)':'var(--card)'};color:${isSel?'#fff':'var(--text)'};
+            border:${isToday && !isSel ?'1.5px solid var(--turquoise)':'1px solid transparent'};">
+            <div style="font-size:10.5px;font-weight:700;">${dpDayName(d)}</div>
+            <div style="font-size:13px;font-weight:700;">${d.slice(8,10)}</div>
+            <div style="font-size:11px;">${dot}</div>
+          </div>
+        `;
+      }).join("")}
+    </div>
+    <div class="chart-card">
+      <h3>${dpFmtDate(selected)}</h3>
+      ${dpPlanBody(mp, plan, selected, false)}
+      ${plan && isStaff() ? `<span class="delete-link" style="display:block;margin-top:10px;" onclick="deleteDailyPlan('${mp.id}','${selected}')">🗑 Hapus Rencana Hari Ini</span>` : ""}
+    </div>
+  `;
+}
+function dpSelectDate(d){ state.dpSelectedDate = d; render(); }
+function dpChangeWeek(mpId, dir){ state.dpWeekStart = addDaysISO(state.dpWeekStart, dir*7); render(); }
+
+/* ---- Builder: buat/edit rencana sesi harian ---- */
+function openDailyPlanBuilder(mpId, dateStr){
+  const list = loadMasterplans();
+  const mp = list.find(m=>m.id===mpId); if(!mp) return;
+  const existing = getDailyPlan(mp, dateStr);
+  dpDraft = existing ? JSON.parse(JSON.stringify(existing)) : emptyDailyPlan(dateStr);
+  dpDraft.mpId = mpId;
+  openModal("editDailyPlan", {mpId, date:dateStr});
+}
+function dpUpdateMeta(field, val){ dpDraft[field] = val; }
+function dpToggleRestDay(){ dpDraft.isRestDay = !dpDraft.isRestDay; render(); }
+function dpAddExercise(blockIdx){ dpDraft.blocks[blockIdx].exercises.push(emptyDpExercise()); render(); }
+function dpRemoveExercise(blockIdx, i){ dpDraft.blocks[blockIdx].exercises.splice(i,1); render(); }
+function dpUpdateExercise(blockIdx, i, field, val){ dpDraft.blocks[blockIdx].exercises[i][field] = val; }
+function dpExerciseFields(ex, blockIdx, i, category){
+  const set = (f,v)=>`dpUpdateExercise(${blockIdx},${i},'${f}',this.value)`;
+  if(category==="Combat"){
+    return `
+      <div class="field"><label>Nama (cth. Pad Work)</label><input type="text" value="${ex.name}" oninput="${set('name')}"/></div>
+      <div class="field"><label>Training Type</label>
+        <select onchange="${set('trainingType')}">
+          <option value="">-</option>
+          ${DP_COMBAT_TYPES.map(t=>`<option value="${t}" ${ex.trainingType===t?'selected':''}>${t}</option>`).join("")}
+        </select>
+      </div>
+      <div class="field-row3">
+        <div class="field"><label>Rounds</label><input type="number" min="1" value="${ex.rounds}" oninput="${set('rounds')}"/></div>
+        <div class="field"><label>Durasi Round (min)</label><input type="text" value="${ex.roundDuration}" oninput="${set('roundDuration')}" placeholder="cth. 3"/></div>
+        <div class="field"><label>Rest (min)</label><input type="text" value="${ex.restDuration}" oninput="${set('restDuration')}" placeholder="cth. 1"/></div>
+      </div>
+      <div class="field-row">
+        <div class="field"><label>Intensity</label><input type="text" value="${ex.intensity}" oninput="${set('intensity')}" placeholder="cth. Moderate/High"/></div>
+        <div class="field"><label>RPE Target (0-10)</label><input type="number" min="0" max="10" value="${ex.rpeTarget}" oninput="${set('rpeTarget')}"/></div>
+      </div>
+      <div class="field"><label>Notes / coaching cues</label><input type="text" value="${ex.notes}" oninput="${set('notes')}"/></div>
+    `;
+  }
+  if(category==="Strength"){
+    return `
+      <div class="field"><label>Exercise</label><input type="text" value="${ex.name}" oninput="${set('name')}" placeholder="cth. Back Squat"/></div>
+      <div class="field-row3">
+        <div class="field"><label>Sets</label><input type="number" min="1" value="${ex.sets}" oninput="${set('sets')}"/></div>
+        <div class="field"><label>Reps</label><input type="text" value="${ex.reps}" oninput="${set('reps')}"/></div>
+        <div class="field"><label>Load (kg)</label><input type="number" min="0" value="${ex.load}" oninput="${set('load')}"/></div>
+      </div>
+      <div class="field-row3">
+        <div class="field"><label>% 1RM</label><input type="number" min="0" max="100" value="${ex.pct1rm}" oninput="${set('pct1rm')}"/></div>
+        <div class="field"><label>RPE Target</label><input type="number" min="0" max="10" value="${ex.rpeTarget}" oninput="${set('rpeTarget')}"/></div>
+        <div class="field"><label>RIR Target</label><input type="number" min="0" max="10" value="${ex.rirTarget}" oninput="${set('rirTarget')}"/></div>
+      </div>
+      <div class="field-row">
+        <div class="field"><label>Rest Interval</label><input type="text" value="${ex.rest}" oninput="${set('rest')}" placeholder="cth. 2 min"/></div>
+        <div class="field"><label>Tempo (opsional)</label><input type="text" value="${ex.tempo}" oninput="${set('tempo')}" placeholder="cth. 3-1-1"/></div>
+      </div>
+      <div class="field"><label>Notes / coaching cues</label><input type="text" value="${ex.notes}" oninput="${set('notes')}"/></div>
+    `;
+  }
+  if(category==="Conditioning"){
+    return `
+      <div class="field"><label>Nama (cth. Assault Bike)</label><input type="text" value="${ex.name}" oninput="${set('name')}"/></div>
+      <div class="field-row3">
+        <div class="field"><label>Sets</label><input type="number" min="1" value="${ex.sets}" oninput="${set('sets')}"/></div>
+        <div class="field"><label>Durasi</label><input type="text" value="${ex.duration}" oninput="${set('duration')}" placeholder="cth. 2 min"/></div>
+        <div class="field"><label>Distance</label><input type="text" value="${ex.distance}" oninput="${set('distance')}" placeholder="opsional"/></div>
+      </div>
+      <div class="field-row">
+        <div class="field"><label>Rest Interval</label><input type="text" value="${ex.rest}" oninput="${set('rest')}" placeholder="cth. 1 min"/></div>
+        <div class="field"><label>RPE Target</label><input type="number" min="0" max="10" value="${ex.rpeTarget}" oninput="${set('rpeTarget')}"/></div>
+      </div>
+      <div class="field"><label>Notes / coaching cues</label><input type="text" value="${ex.notes}" oninput="${set('notes')}"/></div>
+    `;
+  }
+  // Warm Up / Other
+  return `
+    <div class="field"><label>Nama</label><input type="text" value="${ex.name}" oninput="${set('name')}"/></div>
+    <div class="field-row3">
+      <div class="field"><label>Sets</label><input type="text" value="${ex.sets}" oninput="${set('sets')}" placeholder="opsional"/></div>
+      <div class="field"><label>Durasi</label><input type="text" value="${ex.duration}" oninput="${set('duration')}" placeholder="cth. 8 min"/></div>
+      <div class="field"><label>Reps</label><input type="text" value="${ex.reps}" oninput="${set('reps')}" placeholder="opsional"/></div>
+    </div>
+    <div class="field"><label>Notes / coaching cues</label><input type="text" value="${ex.notes}" oninput="${set('notes')}"/></div>
+  `;
+}
+function modalEditDailyPlan(payload){
+  const d = dpDraft;
+  return `
+    <div class="modal-head"><h3>Rencana Sesi — ${dpFmtDate(d.date)}</h3><button class="close-x" onclick="closeModal()">✕</button></div>
+    <div class="field" style="display:flex;align-items:center;gap:8px;">
+      <input type="checkbox" id="dp-rest" ${d.isRestDay?'checked':''} onchange="dpToggleRestDay()"/>
+      <label for="dp-rest" style="margin:0;">Tandai sebagai Rest Day</label>
+    </div>
+    ${d.isRestDay ? `
+      <div class="field"><label>Catatan (opsional)</label><input type="text" value="${d.notes||''}" oninput="dpUpdateMeta('notes',this.value)"/></div>
+    ` : `
+      <div class="field"><label>Judul Sesi</label><input type="text" value="${d.title||''}" oninput="dpUpdateMeta('title',this.value)" placeholder="cth. Strength + Muay Thai"/></div>
+      ${d.blocks.map((b,bi)=>`
+        <h3 style="margin:16px 0 8px;">${b.category}</h3>
+        ${b.exercises.map((ex,i)=>`
+          <div class="chart-card" style="margin-bottom:10px;">
+            ${dpExerciseFields(ex, bi, i, b.category)}
+            <div class="field" style="display:flex;align-items:center;gap:8px;margin-top:4px;">
+              <input type="checkbox" ${ex.completed?'checked':''} onchange="dpUpdateExercise(${bi},${i},'completed',this.checked); this.defaultChecked=this.checked;" />
+              <label style="margin:0;">Sudah selesai (completion status)</label>
+            </div>
+            <span class="delete-link" onclick="dpRemoveExercise(${bi},${i})">🗑 Hapus item</span>
+          </div>
+        `).join("")}
+        <button class="btn ghost" onclick="dpAddExercise(${bi})">+ Tambah ${b.category}</button>
+      `).join("")}
+    `}
+    <div id="dp-err" class="err" style="display:none;margin-top:10px;"></div>
+    <button class="btn" style="margin-top:14px;" onclick="submitDailyPlan()">Simpan Rencana Sesi</button>
+  `;
+}
+function submitDailyPlan(){
+  const errBox = document.getElementById("dp-err");
+  if(!dpDraft.isRestDay && !dpDraft.title.trim()){
+    errBox.style.display="block"; errBox.textContent="Isi judul sesi, atau tandai sebagai Rest Day."; return;
+  }
+  const mpId = dpDraft.mpId;
+  const plan = JSON.parse(JSON.stringify(dpDraft));
+  delete plan.mpId;
+  saveDailyPlan(mpId, plan);
+  dpDraft = null;
+  closeModal(); render();
+  showToast("Rencana sesi tersimpan");
+}
+
+/* ---- Complete Session -> update plan + kirim data aktual ke Training Load ---- */
+function openCompleteSessionModal(mpId, dateStr){
+  openModal("completeSession", {mpId, date:dateStr});
+}
+function modalCompleteSession(payload){
+  const list = loadMasterplans();
+  const mp = list.find(m=>m.id===payload.mpId);
+  const plan = mp ? getDailyPlan(mp, payload.date) : null;
+  if(!plan) return `<div class="modal-head"><h3>Selesaikan Sesi</h3><button class="close-x" onclick="closeModal()">✕</button></div><p>Rencana tidak ditemukan.</p>`;
+  // Estimasi awal dari planned data (durasi warm up/conditioning + rata2 RPE target)
+  const allEx = plan.blocks.flatMap(b=>b.exercises);
+  const rpeVals = allEx.map(e=>Number(e.rpeTarget)).filter(v=>v>0);
+  const estRpe = rpeVals.length ? Math.round(rpeVals.reduce((a,b)=>a+b,0)/rpeVals.length) : "";
+  return `
+    <div class="modal-head"><h3>Selesaikan Sesi</h3><button class="close-x" onclick="closeModal()">✕</button></div>
+    <p class="helper">${plan.title} · ${dpFmtDate(plan.date)}</p>
+    <div class="field-row">
+      <div class="field"><label>Durasi Aktual (menit)</label><input id="cs-duration" type="number" min="1" max="300" placeholder="cth. 90"/></div>
+      <div class="field"><label>Session RPE Aktual (0-10)</label><input id="cs-rpe" type="number" min="0" max="10" value="${estRpe}"/></div>
+    </div>
+    <p class="helper">Data ini akan otomatis masuk ke Training Load (Acute/Chronic Load, ACWR) atlet.</p>
+    <div id="cs-err" class="err" style="display:none;"></div>
+    <button class="btn" onclick="submitCompleteSession('${payload.mpId}','${payload.date}')">Simpan & Hitung Training Load</button>
+  `;
+}
+async function submitCompleteSession(mpId, dateStr){
+  const errBox = document.getElementById("cs-err");
+  const duration = Number(document.getElementById("cs-duration").value);
+  const rpe = Number(document.getElementById("cs-rpe").value);
+  if(!duration || duration<1 || duration>300){ errBox.style.display="block"; errBox.textContent="Durasi harus antara 1-300 menit."; return; }
+  if(document.getElementById("cs-rpe").value==="" || rpe<0 || rpe>10){ errBox.style.display="block"; errBox.textContent="Session RPE harus antara 0-10."; return; }
+  errBox.style.display="none";
+
+  const list = loadMasterplans();
+  const mp = list.find(m=>m.id===mpId); if(!mp) return;
+  const plan = getDailyPlan(mp, dateStr); if(!plan) return;
+
+  // Tentukan training_type dominan untuk dicatat di Training Load (existing training_sessions),
+  // prioritas: ada blok Strength dengan exercise -> "Strength Training", ada Combat -> nama trainingType-nya,
+  // kalau tidak ada -> "Other".
+  const strengthBlock = plan.blocks.find(b=>b.category==="Strength" && b.exercises.length>0);
+  const combatBlock = plan.blocks.find(b=>b.category==="Combat" && b.exercises.length>0);
+  let sessionType = "Other";
+  if(strengthBlock) sessionType = "Strength Training";
+  else if(combatBlock) sessionType = combatBlock.exercises[0].trainingType || "Muay Thai";
+  else {
+    const condBlock = plan.blocks.find(b=>b.category==="Conditioning" && b.exercises.length>0);
+    if(condBlock) sessionType = "Running";
+  }
+
+  let strengthPayload = null;
+  if(strengthBlock){
+    const rows = strengthBlock.exercises
+      .filter(e=>e.name && e.sets && e.reps && e.load)
+      .map(e=>({ exercise:e.name, sets:Number(e.sets)||0, reps:Number(e.reps)||0, load:Number(e.load)||0,
+        pct1rm: e.pct1rm?Number(e.pct1rm):null, rir: e.rirTarget?Number(e.rirTarget):null, exerciseRpe: e.rpeTarget?Number(e.rpeTarget):null }));
+    if(rows.length) strengthPayload = rows;
+  }
+
+  const insertObj = {
+    athlete_id: mp.athleteId, session_date: dateStr, session_type: sessionType,
+    duration_minutes: duration, session_rpe: rpe, notes: `Dari Daily Plan: ${plan.title}`
+  };
+  if(strengthPayload) insertObj.strength_data = strengthPayload;
+
+  const { error } = await sb.from("training_sessions").insert(insertObj);
+  if(error){
+    errBox.style.display="block";
+    errBox.textContent = "Gagal menyimpan ke Training Load: " + error.message;
+    return;
+  }
+  await refreshTrainingLoad();
+
+  plan.status = "completed"; plan.completedAt = Date.now();
+  plan.actualDuration = duration; plan.actualRPE = rpe;
+  plan.blocks.forEach(b=>b.exercises.forEach(e=>e.completed=true));
+  saveDailyPlan(mpId, plan);
+
+  closeModal(); render();
+  showToast(`Sesi selesai · Session Load ${duration*rpe} AU tercatat di Training Load`);
+}
+
 /* ---------------- MASTER PLAN: DAFTAR ---------------- */
 function viewMasterplanList(){
   const plans = loadMasterplans();
@@ -3991,6 +4398,7 @@ function viewMasterplanDetail(){
 
     <div class="section-tabs">
       <button class="${state.mpSection==='overview'?'active':''}" onclick="setMpSection('overview')">Ringkasan</button>
+      <button class="${state.mpSection==='daily'?'active':''}" onclick="setMpSection('daily')">Daily Planner</button>
       <button class="${state.mpSection==='macrocycle'?'active':''}" onclick="setMpSection('macrocycle')">Macrocycle</button>
       <button class="${state.mpSection==='mesocycle'?'active':''}" onclick="setMpSection('mesocycle')">Mesocycle</button>
       <button class="${state.mpSection==='monitoring'?'active':''}" onclick="setMpSection('monitoring')">Monitoring</button>
@@ -3998,6 +4406,7 @@ function viewMasterplanDetail(){
 
     <div id="mp-section-body">
       ${state.mpSection==='overview' ? mpOverviewSection(mp, wk) : ""}
+      ${state.mpSection==='daily' ? mpDailySection(mp, wk) : ""}
       ${state.mpSection==='macrocycle' ? mpMacrocycleSection(mp, wk) : ""}
       ${state.mpSection==='mesocycle' ? mpMesocycleSection(mp, wk) : ""}
       ${state.mpSection==='monitoring' ? mpMonitoringSection(mp, wk) : ""}
@@ -4180,6 +4589,8 @@ function renderModal(){
   if(state.modal.name==="importAthletes") modal.innerHTML = modalImportAthletes();
   if(state.modal.name==="addScoringProfile") modal.innerHTML = modalAddScoringProfile(state.modal.payload);
   if(state.modal.name==="importScoringStandards") modal.innerHTML = modalImportScoringStandards();
+  if(state.modal.name==="editDailyPlan") modal.innerHTML = modalEditDailyPlan(state.modal.payload);
+  if(state.modal.name==="completeSession") modal.innerHTML = modalCompleteSession(state.modal.payload);
   if(state.modal.name==="backup") modal.innerHTML = modalBackup();
   if(state.modal.name==="addMasterplan") modal.innerHTML = modalAddMasterplan();
   if(state.modal.name==="addWeeklyLog") modal.innerHTML = modalAddWeeklyLog(state.modal.payload);
