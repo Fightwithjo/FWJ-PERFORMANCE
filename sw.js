@@ -1,26 +1,34 @@
-// sw.js — Service Worker untuk Fight With Jo - Performance App
+const CACHE_NAME = "fight-with-jo-v1";
 
-const CACHE_NAME = "fwj-cache-v5"; // dinaikkan dari v4 -> v5, gabungan fitur Training Load + Scoring Standards
-const OFFLINE_URL = "./index.html";
-
-// File inti yang di-cache saat instalasi (app shell)
+// Aset inti yang di-precache saat service worker diinstall
 const CORE_ASSETS = [
+  "./",
   "./index.html",
   "./manifest.json",
   "./icon-192.png",
-  "./icon-512.png"
+  "./icon-512.png",
+  "https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.0/chart.umd.min.js",
+  "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"
 ];
 
-// Install: cache app shell
+// ---------------- INSTALL ----------------
 self.addEventListener("install", (event) => {
   event.waitUntil(
-    caches.open(CACHE_NAME)
-      .then((cache) => cache.addAll(CORE_ASSETS))
-      .then(() => self.skipWaiting())
+    caches.open(CACHE_NAME).then((cache) => {
+      return Promise.all(
+        CORE_ASSETS.map((url) =>
+          cache.add(url).catch((err) => {
+            // Jangan gagalkan seluruh instalasi hanya karena satu aset (mis. offline saat install)
+            console.warn("Gagal precache:", url, err);
+          })
+        )
+      );
+    })
   );
+  self.skipWaiting();
 });
 
-// Activate: bersihkan cache lama (v1, dsb)
+// ---------------- ACTIVATE ----------------
 self.addEventListener("activate", (event) => {
   event.waitUntil(
     caches.keys().then((keys) =>
@@ -29,33 +37,21 @@ self.addEventListener("activate", (event) => {
           .filter((key) => key !== CACHE_NAME)
           .map((key) => caches.delete(key))
       )
-    ).then(() => self.clients.claim())
+    )
   );
+  self.clients.claim();
 });
 
-// Fetch: strategi berbeda tergantung jenis request
+// ---------------- FETCH ----------------
 self.addEventListener("fetch", (event) => {
   const req = event.request;
-
-  // Hanya tangani GET request
-  if (req.method !== "GET") return;
-
   const url = new URL(req.url);
 
-  // Request ke Supabase (API/data) -> selalu network, jangan di-cache
-  if (url.hostname.includes("supabase.co") || url.hostname.includes("supabase.in")) {
-    event.respondWith(
-      fetch(req).catch(() =>
-        new Response(JSON.stringify({ error: "offline" }), {
-          headers: { "Content-Type": "application/json" },
-          status: 503
-        })
-      )
-    );
-    return;
-  }
+  // Jangan campur tangani request non-GET (mis. POST ke Supabase) atau request ke domain Supabase itu sendiri
+  if (req.method !== "GET") return;
+  if (url.hostname.includes("supabase.co") || url.hostname.includes("supabase.in")) return;
 
-  // Navigasi halaman (buka app) -> network-first, fallback ke cache/offline
+  // Navigasi (buka app / reload) -> network-first, fallback ke cache index.html saat offline
   if (req.mode === "navigate") {
     event.respondWith(
       fetch(req)
@@ -64,20 +60,16 @@ self.addEventListener("fetch", (event) => {
           caches.open(CACHE_NAME).then((cache) => cache.put(req, resClone));
           return res;
         })
-        .catch(() =>
-          caches.match(req).then((cached) => cached || caches.match(OFFLINE_URL))
-        )
+        .catch(() => caches.match("./index.html"))
     );
     return;
   }
 
-  // Aset lain (CSS/JS CDN, gambar, dsb) -> cache-first, fallback network, lalu update cache
+  // Aset statis (JS/CSS/gambar/manifest/CDN) -> cache-first, update di background
   event.respondWith(
     caches.match(req).then((cached) => {
-      if (cached) return cached;
-      return fetch(req)
+      const fetchPromise = fetch(req)
         .then((res) => {
-          // Hanya cache respons valid
           if (res && res.status === 200) {
             const resClone = res.clone();
             caches.open(CACHE_NAME).then((cache) => cache.put(req, resClone));
@@ -85,6 +77,8 @@ self.addEventListener("fetch", (event) => {
           return res;
         })
         .catch(() => cached);
+
+      return cached || fetchPromise;
     })
   );
 });
