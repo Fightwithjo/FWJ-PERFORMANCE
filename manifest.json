@@ -1,13 +1,17 @@
 {
+  "id": "./",
   "name": "Fight With Jo - Performance App",
-  "short_name": "Fight With Jo",
-  "description": "Aplikasi performance tracking untuk atlet: assessment, readiness, load, injury, dan masterplan.",
-  "start_url": "./index.html",
+  "short_name": "FightWithJo",
+  "description": "Aplikasi performa atlet Fight With Jo: tes fisik, cedera, beban latihan, dan master plan.",
+  "lang": "id",
+  "dir": "ltr",
+  "start_url": "./",
   "scope": "./",
   "display": "standalone",
   "orientation": "portrait",
   "background_color": "#FFFFFF",
   "theme_color": "#0A0A0A",
+  "categories": ["sports", "health", "fitness"],
   "icons": [
     {
       "src": "icon-192.png",
@@ -16,16 +20,16 @@
       "purpose": "any"
     },
     {
-      "src": "icon-192.png",
-      "sizes": "192x192",
-      "type": "image/png",
-      "purpose": "maskable"
-    },
-    {
       "src": "icon-512.png",
       "sizes": "512x512",
       "type": "image/png",
       "purpose": "any"
+    },
+    {
+      "src": "icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "maskable"
     },
     {
       "src": "icon-512.png",
