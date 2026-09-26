@@ -50,13 +50,6 @@
   header.top h1{font-size:16px;margin:0;font-weight:800;letter-spacing:0.01em;line-height:1.15;}
   header.top p{margin:1px 0 0;font-size:10.5px;color:var(--turquoise-dark);font-weight:700;text-transform:uppercase;letter-spacing:0.06em;}
   .backup-btn{margin-left:auto;background:none;border:1px solid var(--border);border-radius:8px;padding:7px 10px;font-size:11px;color:var(--turquoise-dark);font-weight:600;cursor:pointer;}
-  .sync-badge{display:inline-block;min-width:15px;height:15px;line-height:15px;border-radius:8px;background:var(--poor);color:#fff;font-size:9px;font-weight:800;text-align:center;padding:0 3px;margin-left:4px;vertical-align:middle;}
-  .save-status-slot{display:inline-block;}
-  .save-status{font-size:11px;font-weight:700;padding:3px 9px;border-radius:20px;display:inline-flex;align-items:center;gap:4px;}
-  .save-status.saving{background:var(--turquoise-tint);color:var(--turquoise-dark);}
-  .save-status.saved{background:#E4F5EC;color:#1D9E75;}
-  .save-status.error{background:#FCEAEA;color:var(--poor);cursor:pointer;text-decoration:underline;}
-  .save-status.offline{background:#FDF0DE;color:#8A5A16;}
 
   main{padding:16px;}
   h2.page-title{font-size:14px;font-weight:700;margin:0 0 12px;text-transform:uppercase;letter-spacing:0.02em;color:var(--muted);}
@@ -248,11 +241,6 @@
   .vi-axis-label{text-align:center;font-size:9.5px;color:var(--muted);text-transform:uppercase;font-weight:700;letter-spacing:0.03em;margin-top:2px;}
   .vi-axis-label.y{writing-mode:vertical-rl;transform:rotate(180deg);position:absolute;}
 
-  /* ---- Master Plan: Progression & Planned vs Actual ---- */
-  .prog-week-row{display:flex;align-items:center;gap:10px;background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:8px 10px;margin-bottom:6px;}
-  .prog-week-row .wk-num{width:36px;flex-shrink:0;font-weight:800;font-size:12.5px;}
-  .prog-week-row input[type=number]{border:1px solid var(--border);border-radius:8px;padding:6px 8px;font-size:12px;width:100%;background:var(--bg);color:var(--text);}
-
   .warn-box{border-radius:10px;padding:10px 12px;margin-bottom:8px;font-size:12px;line-height:1.45;display:flex;gap:8px;align-items:flex-start;}
   .warn-box.sev-high{background:#FCEAEA;color:#8A2323;}
   .warn-box.sev-med{background:#FDF0DE;color:#8A5A16;}
@@ -370,180 +358,6 @@ const sb = (SUPABASE_URL.includes("YOUR-PROJECT-REF") || !window.supabase)
   : window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
 const BUCKET = "athlete-assets";
-
-/* ==========================================================
-   CROSS-DEVICE SYNC ENGINE
-   Supabase = single source of truth. IndexedDB = offline-first
-   temporary cache + sync queue (dipakai kalau device sedang offline
-   atau request Supabase gagal). localStorage HANYA untuk preference
-   ringan (theme, last athlete, last page) — lihat uiPref* di bawah.
-========================================================== */
-const IDB_NAME = "fwj_offline_v1";
-const IDB_VERSION = 1;
-const IDB_STORE_QUEUE = "sync_queue";   // pending writes yang belum berhasil ke Supabase
-const IDB_STORE_CACHE = "cache_mirror"; // salinan terakhir data cloud, untuk dibaca saat offline
-
-let _idbPromise = null;
-function idbOpen(){
-  if(_idbPromise) return _idbPromise;
-  _idbPromise = new Promise((resolve)=>{
-    if(!("indexedDB" in window)){ resolve(null); return; }
-    const req = indexedDB.open(IDB_NAME, IDB_VERSION);
-    req.onupgradeneeded = (e)=>{
-      const db = e.target.result;
-      if(!db.objectStoreNames.contains(IDB_STORE_QUEUE)) db.createObjectStore(IDB_STORE_QUEUE, {keyPath:"id"});
-      if(!db.objectStoreNames.contains(IDB_STORE_CACHE)) db.createObjectStore(IDB_STORE_CACHE, {keyPath:"key"});
-    };
-    req.onsuccess = ()=>resolve(req.result);
-    req.onerror = ()=>resolve(null);
-  });
-  return _idbPromise;
-}
-async function idbPut(store, obj){
-  const db = await idbOpen(); if(!db) return false;
-  return new Promise(resolve=>{
-    try{
-      const tx = db.transaction(store, "readwrite");
-      tx.objectStore(store).put(obj);
-      tx.oncomplete = ()=>resolve(true);
-      tx.onerror = ()=>resolve(false);
-    }catch(e){ resolve(false); }
-  });
-}
-async function idbDelete(store, key){
-  const db = await idbOpen(); if(!db) return false;
-  return new Promise(resolve=>{
-    try{
-      const tx = db.transaction(store, "readwrite");
-      tx.objectStore(store).delete(key);
-      tx.oncomplete = ()=>resolve(true);
-      tx.onerror = ()=>resolve(false);
-    }catch(e){ resolve(false); }
-  });
-}
-async function idbGetAll(store){
-  const db = await idbOpen(); if(!db) return [];
-  return new Promise(resolve=>{
-    try{
-      const tx = db.transaction(store, "readonly");
-      const req = tx.objectStore(store).getAll();
-      req.onsuccess = ()=>resolve(req.result||[]);
-      req.onerror = ()=>resolve([]);
-    }catch(e){ resolve([]); }
-  });
-}
-async function idbGet(store, key){
-  const db = await idbOpen(); if(!db) return null;
-  return new Promise(resolve=>{
-    try{
-      const tx = db.transaction(store, "readonly");
-      const req = tx.objectStore(store).get(key);
-      req.onsuccess = ()=>resolve(req.result||null);
-      req.onerror = ()=>resolve(null);
-    }catch(e){ resolve(null); }
-  });
-}
-
-// Debounce generik — dipakai supaya Auto Save tidak mengirim request ke Supabase
-// pada SETIAP karakter yang diketik, melainkan ±500-1000ms setelah user berhenti mengetik.
-function debounce(fn, delay){
-  let t;
-  const debounced = (...args)=>{ clearTimeout(t); t = setTimeout(()=>fn(...args), delay); };
-  debounced.cancel = ()=>clearTimeout(t);
-  return debounced;
-}
-
-// Status Auto Save per-field/per-record: "saving" | "saved" | "error" | "offline"
-const syncState = { statuses:{}, online: navigator.onLine, queueCount:0 };
-let _retrySaveFns = {};
-function setSaveStatus(key, status){
-  syncState.statuses[key] = { status, at: Date.now() };
-  const el = document.getElementById(`savestat-${key}`);
-  if(!el) return;
-  const map = {
-    saving:  `<span class="save-status saving">💾 Saving...</span>`,
-    saved:   `<span class="save-status saved">✓ Saved</span>`,
-    error:   `<span class="save-status error" onclick="retrySave('${key}')">⚠ Save failed — Retry</span>`,
-    offline: `<span class="save-status offline">📴 Offline — Changes Saved Locally</span>`
-  };
-  el.innerHTML = map[status] || "";
-}
-function saveStatusBadge(key){ return `<span id="savestat-${key}" class="save-status-slot"></span>`; }
-function retrySave(key){ if(_retrySaveFns[key]) _retrySaveFns[key](); }
-
-// Upsert satu row ke Supabase. Kalau offline/gagal -> masuk IndexedDB Sync Queue,
-// tidak hilang, dan otomatis dicoba lagi saat online / klik "Sync Now".
-async function cloudUpsert(table, row, statusKey){
-  _retrySaveFns[statusKey] = ()=>cloudUpsert(table, row, statusKey);
-  if(!sb || !navigator.onLine){
-    setSaveStatus(statusKey, "offline");
-    await idbPut(IDB_STORE_QUEUE, { id:`${table}:${row.id}:${Date.now()}`, table, row, createdAt:Date.now() });
-    updateSyncQueueBadge();
-    return { offline:true };
-  }
-  setSaveStatus(statusKey, "saving");
-  try{
-    const { error } = await sb.from(table).upsert(row, { onConflict:"id" });
-    if(error){
-      setSaveStatus(statusKey, "error");
-      await idbPut(IDB_STORE_QUEUE, { id:`${table}:${row.id}:${Date.now()}`, table, row, createdAt:Date.now() });
-      updateSyncQueueBadge();
-      return { error };
-    }
-    setSaveStatus(statusKey, "saved");
-    return { ok:true };
-  }catch(e){
-    setSaveStatus(statusKey, "error");
-    await idbPut(IDB_STORE_QUEUE, { id:`${table}:${row.id}:${Date.now()}`, table, row, createdAt:Date.now() });
-    updateSyncQueueBadge();
-    return { error:e };
-  }
-}
-async function updateSyncQueueBadge(){
-  const q = await idbGetAll(IDB_STORE_QUEUE);
-  syncState.queueCount = q.length;
-  const el = document.getElementById("sync-now-badge");
-  if(el) el.textContent = q.length ? String(q.length) : "";
-  const el2 = document.getElementById("sync-now-btn");
-  if(el2) el2.style.display = "inline-flex";
-}
-// Proses ulang Sync Queue (dipanggil saat browser online lagi, saat login, atau tombol "Sync Now").
-async function flushSyncQueue(silent){
-  if(!sb || !navigator.onLine) return;
-  const items = await idbGetAll(IDB_STORE_QUEUE);
-  if(!items.length){ if(!silent) showToast("Tidak ada perubahan offline yang perlu disinkron"); return; }
-  if(!silent) showToast(`Menyinkronkan ${items.length} perubahan...`);
-  // Ambil hanya versi terbaru per (table,row.id) supaya tidak menimpa versi baru dengan versi lama.
-  const latest = {};
-  items.sort((a,b)=>a.createdAt-b.createdAt).forEach(it=>{ latest[`${it.table}:${it.row.id}`] = it; });
-  let ok=0, fail=0;
-  for(const it of Object.values(latest)){
-    try{
-      const { error } = await sb.from(it.table).upsert(it.row, { onConflict:"id" });
-      if(!error) ok++; else fail++;
-    }catch(e){ fail++; }
-  }
-  if(fail===0){ for(const it of items) await idbDelete(IDB_STORE_QUEUE, it.id); }
-  else { for(const it of Object.values(latest)) await idbDelete(IDB_STORE_QUEUE, it.id); }
-  await updateSyncQueueBadge();
-  showToast(fail===0 ? "All Changes Synced ✓" : `${ok} tersinkron, ${fail} gagal — akan dicoba lagi`);
-  await refreshAll();
-  render();
-}
-window.addEventListener("online", ()=>{ syncState.online = true; showToast("Kembali online — menyinkronkan data..."); flushSyncQueue(true); });
-window.addEventListener("offline", ()=>{ syncState.online = false; showToast("Offline — perubahan akan disimpan lokal dan disinkron otomatis nanti"); });
-
-// ---- localStorage: HANYA untuk preference ringan (bukan database utama) ----
-const UI_PREF_KEY = "fwj_ui_prefs_v1";
-function loadUiPrefs(){ try{ return JSON.parse(localStorage.getItem(UI_PREF_KEY))||{}; }catch(e){ return {}; } }
-function saveUiPref(key, value){
-  try{
-    const p = loadUiPrefs(); p[key]=value;
-    localStorage.setItem(UI_PREF_KEY, JSON.stringify(p));
-  }catch(e){}
-}
-
-const BUCKET_PLACEHOLDER_UNUSED = null;
 
 /* DB_KEYS dipertahankan supaya seluruh kode UI di bawah (yang memanggil
    loadDB(DB_KEYS.athletes) dsb) tidak perlu diubah satu per satu —
@@ -839,24 +653,16 @@ async function refreshCompetitionResults(){
 }
 
 async function refreshMasterplans(){
-  if(!sb || !navigator.onLine){
-    // Offline / belum terhubung — baca dari mirror IndexedDB (offline-first), bukan hanya localStorage.
-    const cached = await idbGet(IDB_STORE_CACHE, "masterplans");
-    if(cached && cached.value) cache.masterplans = cached.value;
-    return;
-  }
+  if(!sb) return;
   const { data, error } = await sb.from("training_masterplans").select("*").order("created_at",{ascending:false});
   if(error){
-    // Tabel mungkin belum dibuat, atau request gagal — jangan blokir load,
-    // pakai mirror IndexedDB / localStorage yang ada sebagai fallback offline-first.
+    // Tabel mungkin belum dibuat (migration belum dijalankan) — jangan blokir load,
+    // cukup pakai salinan lokal (localStorage) yang ada sebagai fallback.
     console.warn("Gagal memuat Master Plan dari cloud (cek migration training_masterplans):", error.message);
-    const cached = await idbGet(IDB_STORE_CACHE, "masterplans");
-    if(cached && cached.value) cache.masterplans = cached.value;
     return;
   }
-  cache.masterplans = (data||[]).map(r=>{ const mp = r.data; mp._serverUpdatedAt = r.updated_at; return mp; });
+  cache.masterplans = (data||[]).map(r=>r.data);
   try{ localStorage.setItem(MP_KEY, JSON.stringify(cache.masterplans)); }catch(e){}
-  idbPut(IDB_STORE_CACHE, { key:"masterplans", value:cache.masterplans }).catch(()=>{});
 }
 
 async function refreshAll(){
@@ -1341,8 +1147,6 @@ let state = {
 let chartInstances = {};
 let tlDraft = null; // draft state form "Catat Sesi Latihan" (Training Load)
 let dpDraft = null; // draft state builder "Daily Session Plan"
-let progDraft = null; // draft state form "Week-to-Week Progression"
-let wtDraft = null; // draft state form "Generate Sesi Mingguan (Template)"
 function destroyChart(id){ if(chartInstances[id]){ chartInstances[id].destroy(); delete chartInstances[id]; } }
 
 /* ---------------- ROLE & PERMISSION (frontend gating) ----------------
@@ -1376,9 +1180,6 @@ function render(){
         <button class="logout-btn" onclick="handleLogout()">Keluar</button>
       </div>
       ${isAdmin() ? `<button class="backup-btn" onclick="openAdminPanel()" title="Admin">⚙</button>` : ""}
-      <button class="backup-btn" id="sync-now-btn" onclick="flushSyncQueue(false)" title="Sync Now" style="position:relative;">
-        ${navigator.onLine ? "🔄" : "📴"}<span id="sync-now-badge" class="sync-badge"></span>
-      </button>
       <button class="backup-btn" onclick="openModal('backup')">⬇</button>
     </header>
     <main id="main"></main>
@@ -1398,15 +1199,11 @@ function render(){
   `;
   renderMain();
   if(state.modal) renderModal();
-  updateSyncQueueBadge();
 }
 function navBtn(key, icon, label){
   return `<button class="${state.tab===key?'active':''}" onclick="setTab('${key}')"><span class="ic">${icon}</span><span>${label}</span></button>`;
 }
-function setTab(t){
-  state.tab = t; state.athleteId = null; state.mpId = null; render();
-  if(t === "masterplan") refreshMasterplans().then(render); // Refresh Sync: tab Master Plan dibuka
-}
+function setTab(t){ state.tab = t; state.athleteId = null; state.mpId = null; render(); }
 function openModal(name, payload){ state.modal = {name, payload}; render(); }
 function closeModal(){ state.modal = null; render(); }
 function showToast(msg){
@@ -1435,7 +1232,6 @@ function renderMain(){
     if(state.athleteSection === "load") drawLoadChart();
     if(state.athleteSection === "profile") drawPerformanceRadarChart();
   }
-  if(state.tab === "masterplan" && state.mpId && state.mpSection === "analysis") drawPvaCharts();
 }
 
 /* ---------------- DASHBOARD ---------------- */
@@ -2520,11 +2316,7 @@ function viewAthleteList(){
     <button class="btn ghost" style="margin-top:8px;" onclick="openModal('importAthletes')">Import Atlet dari CSV</button>` : ""}
   `;
 }
-function openAthlete(id){
-  state.tab="athletes"; state.athleteId=id; state.athleteSection="overview"; state.selectedPart=null; render();
-  saveUiPref("lastAthleteId", id); // preference ringan — bukan database utama
-  Promise.all([refreshTrainingLoad(), refreshReadiness(), refreshMasterplans()]).then(render); // Refresh Sync: athlete diganti
-}
+function openAthlete(id){ state.tab="athletes"; state.athleteId=id; state.athleteSection="overview"; state.selectedPart=null; render(); }
 function backToAthleteList(){ state.athleteId=null; render(); }
 function setAthleteSection(s){ state.athleteSection=s; state.selectedPart=null; render(); }
 
@@ -3688,7 +3480,6 @@ function modalAddTrainingSession(athleteId){
 
     <div id="tl-err" class="err" style="display:none;margin-top:10px;"></div>
     <button class="btn" style="margin-top:12px;" onclick="submitTrainingSession()">Simpan Sesi</button>
-    <div style="margin-top:8px;text-align:center;">${saveStatusBadge("trainingsession")}</div>
   `;
 }
 async function submitTrainingSession(){
@@ -3722,26 +3513,23 @@ async function submitTrainingSession(){
 
   const sessionLoad = duration * rpe;
   const insertObj = {
-    id: genUUID(), athlete_id: d.athleteId, session_date: d.date, session_type: d.type,
-    duration_minutes: duration, session_rpe: rpe, notes: d.notes || null,
-    created_by: (cache.profile && cache.profile.id) || null, updated_by: (cache.profile && cache.profile.id) || null,
-    updated_at: new Date().toISOString()
+    athlete_id: d.athleteId, session_date: d.date, session_type: d.type,
+    duration_minutes: duration, session_rpe: rpe, notes: d.notes || null
   };
   if(strengthPayload) insertObj.strength_data = strengthPayload;
 
-  const res = await cloudUpsert("training_sessions", insertObj, "trainingsession");
-  if(res && res.error){
+  const { error } = await sb.from("training_sessions").insert(insertObj);
+  if(error){
     errBox.style.display="block";
     errBox.textContent = strengthPayload
-      ? "Gagal menyimpan: " + (res.error.message||res.error) + " — pastikan kolom strength_data (jsonb) sudah ditambahkan di tabel training_sessions."
-      : "Gagal menyimpan: " + (res.error.message||res.error);
+      ? "Gagal menyimpan: " + error.message + " — pastikan kolom strength_data (jsonb) sudah ditambahkan di tabel training_sessions."
+      : "Gagal menyimpan: " + error.message;
     return;
   }
-  if(!res || !res.offline) await refreshTrainingLoad();
-  else cache.loads = [mapTrainingLoadRow(insertObj), ...cache.loads];
+  await refreshTrainingLoad();
   tlDraft = null;
   closeModal(); render();
-  showToast(res && res.offline ? "Offline — Changes Saved Locally" : `Sesi tersimpan · Session Load ${sessionLoad} AU`);
+  showToast(`Sesi tersimpan · Session Load ${sessionLoad} AU`);
 }
 
 /* ---------------- GOALS & KPI ---------------- */
@@ -4006,129 +3794,25 @@ function loadMasterplans(){
   if(sb && cache.masterplans && Array.isArray(cache.masterplans)) return cache.masterplans; // cloud aktif tapi kosong
   try{ return JSON.parse(localStorage.getItem(MP_KEY)) || []; }catch(e){ return []; }
 }
-// list = seluruh Master Plan di memory (dipakai untuk Update UI langsung — cache.masterplans
-// adalah single source of truth di sisi klien, selalu disinkronkan dari/ke Supabase).
-// statusKey = id badge Saving/Saved/Failed opsional (lihat saveStatusBadge()) untuk form yang memanggil.
-// changedId = kalau diisi, HANYA masterplan dengan id itu yang di-push ke Supabase (bukan seluruh list) —
-// dipakai supaya autosave per-field tidak mengirim ulang seluruh master plan lain yang tidak berubah.
-function saveMasterplans(list, statusKey, changedId){
-  cache.masterplans = list;                                        // 1) Update UI (semua pembaca UI pakai cache.masterplans)
-  try{ localStorage.setItem(MP_KEY, JSON.stringify(list)); }catch(e){} // cache offline ringan (fallback lama, bukan sumber utama)
-  idbPut(IDB_STORE_CACHE, { key:"masterplans", value:list }).catch(()=>{}); // offline-first mirror di IndexedDB
-  const targets = changedId ? list.filter(m=>m.id===changedId) : list;
-  targets.forEach(mp=>syncOneMasterplanToCloud(mp, statusKey || `mp-${mp.id}`)); // 2) Save to Supabase (+status) → 3) update cache → 4) confirm
-  return targets;
+function saveMasterplans(list){
+  cache.masterplans = list;
+  try{ localStorage.setItem(MP_KEY, JSON.stringify(list)); }catch(e){}
+  syncMasterplansToCloud(list);
 }
-// Push satu Master Plan ke Supabase (Single Source of Truth), lalu konfirmasi ke cache lokal.
-async function syncOneMasterplanToCloud(mp, statusKey){
-  if(!mp) return { skipped:true };
-  mp.updatedAt = Date.now();
-  mp.updatedBy = (cache.profile && cache.profile.id) || null;
-  const row = {
-    id: mp.id, athlete_id: mp.athleteId || null, plan_name: mp.name || mp.athleteName || "Master Plan",
-    data: mp, updated_at: new Date().toISOString(), updated_by: mp.updatedBy
-  };
-  const res = await cloudUpsert("training_masterplans", row, statusKey); // Saving.../Saved ✓/Save failed — Retry
-  if(res && res.ok){
-    mp._serverUpdatedAt = row.updated_at; // dipakai untuk Conflict Handling (bagian 16)
-    const idx = cache.masterplans.findIndex(m=>m.id===mp.id);
-    if(idx>-1) cache.masterplans[idx] = mp; // 3) update local cache setelah dikonfirmasi tersimpan
-  }
-  return res;
-}
-// Dipertahankan untuk kompatibilitas: sinkron ulang SEMUA master plan (dipakai saat flush queue/manual sync).
 async function syncMasterplansToCloud(list){
-  for(const mp of list) await syncOneMasterplanToCloud(mp, `mp-${mp.id}`);
+  if(!sb) return;
+  try{
+    if(!list.length) return;
+    const rows = list.map(mp => ({ id: mp.id, athlete_id: mp.athleteId || null, plan_name: mp.name || mp.athleteName || "Master Plan", data: mp }));
+    const { error } = await sb.from("training_masterplans").upsert(rows, { onConflict:"id" });
+    if(error) console.warn("Gagal sinkron Master Plan ke cloud (cek migration training_masterplans):", error.message);
+  }catch(e){ console.warn("Gagal sinkron Master Plan ke cloud:", e); }
 }
 async function deleteMasterplanFromCloud(id){
   if(!sb) return;
-  try{ await sb.from("training_masterplans").delete().eq("id", id); }
-  catch(e){ console.warn("Gagal hapus Master Plan di cloud:", e); }
-}
-
-/* ---- Conflict Handling (bagian 16) ----
-   Sebelum menimpa Master Plan, cek apakah updated_at di server lebih baru dari versi
-   yang terakhir kita sinkronkan di perangkat ini (misalnya diubah dari device lain).
-   Kalau ya, JANGAN diam-diam overwrite — tampilkan pilihan ke coach. */
-async function checkMasterplanConflict(mp){
-  if(!sb || !navigator.onLine) return { conflict:false };
-  try{
-    const { data, error } = await sb.from("training_masterplans").select("updated_at, data").eq("id", mp.id).single();
-    if(error || !data) return { conflict:false };
-    const knownAt = mp._serverUpdatedAt || null;
-    if(knownAt && data.updated_at && new Date(data.updated_at).getTime() > new Date(knownAt).getTime()){
-      return { conflict:true, serverRow:data };
-    }
-    return { conflict:false };
-  }catch(e){ return { conflict:false }; }
-}
-let _conflictCtx = null;
-function openConflictModal(mpId, localList, statusKey, changedId, serverRow){
-  _conflictCtx = { mpId, localList, statusKey, changedId, serverRow };
-  openModal("mpConflict", { mpId });
-}
-function modalMpConflict(payload){
-  const ctx = _conflictCtx;
-  const serverData = ctx.serverRow && ctx.serverRow.data;
-  return `
-    <div class="modal-head"><h3>⚠ Perubahan Bentrok</h3><button class="close-x" onclick="closeModal()">✕</button></div>
-    <p class="helper" style="margin-top:-4px;">This plan was updated on another device.</p>
-    <div class="info-grid" style="margin-bottom:14px;">
-      <div class="info-item"><div class="k">Update di perangkat ini</div><div class="v">${new Date((ctx.localList.find(m=>m.id===ctx.mpId)||{}).updatedAt || Date.now()).toLocaleString("id-ID")}</div></div>
-      <div class="info-item"><div class="k">Update di server (device lain)</div><div class="v">${ctx.serverRow && ctx.serverRow.updated_at ? new Date(ctx.serverRow.updated_at).toLocaleString("id-ID") : '-'}</div></div>
-    </div>
-    <div id="mp-conflict-compare" style="display:none;" class="load-type-card">
-      <h4>Ringkasan Perbedaan</h4>
-      <p class="helper">Versi perangkat ini: ${(ctx.localList.find(m=>m.id===ctx.mpId)||{}).phases?.length||0} phase, ${Object.keys((ctx.localList.find(m=>m.id===ctx.mpId)||{}).weeklyLoads||{}).length} minggu volume/intensity terisi.</p>
-      <p class="helper">Versi server (device lain): ${serverData?.phases?.length||0} phase, ${Object.keys(serverData?.weeklyLoads||{}).length} minggu volume/intensity terisi.</p>
-    </div>
-    <button class="btn" onclick="resolveConflictReloadLatest()">Reload Latest (pakai versi server)</button>
-    <button class="btn ghost" style="margin-top:8px;" onclick="resolveConflictKeepMine()">Keep My Changes (timpa dengan versi ini)</button>
-    <button class="btn ghost" style="margin-top:8px;" onclick="document.getElementById('mp-conflict-compare').style.display='block'">Compare Changes</button>
-  `;
-}
-function resolveConflictReloadLatest(){
-  const ctx = _conflictCtx;
-  const serverMp = ctx.serverRow && ctx.serverRow.data;
-  if(serverMp){
-    const list = loadMasterplans();
-    const idx = list.findIndex(m=>m.id===ctx.mpId);
-    if(idx>-1) list[idx] = serverMp; else list.push(serverMp);
-    cache.masterplans = list;
-    try{ localStorage.setItem(MP_KEY, JSON.stringify(list)); }catch(e){}
-  }
-  _conflictCtx = null;
-  closeModal(); render();
-  showToast("Menggunakan versi terbaru dari server");
-}
-function resolveConflictKeepMine(){
-  const ctx = _conflictCtx;
-  syncOneMasterplanToCloud(ctx.localList.find(m=>m.id===ctx.mpId), ctx.statusKey);
-  _conflictCtx = null;
-  closeModal(); render();
-  showToast("Perubahan Anda disimpan, menimpa versi server");
-}
-// Wrapper: dipakai oleh submit-submit besar (Phase/Weekly Load/Daily Plan/Progression) supaya
-// konflik antar-device terdeteksi SEBELUM overwrite, tanpa membebani autosave per-karakter.
-async function saveMasterplansWithConflictCheck(list, statusKey, changedId){
-  const mp = list.find(m=>m.id===changedId);
-  if(mp){
-    const check = await checkMasterplanConflict(mp);
-    if(check.conflict){ openConflictModal(changedId, list, statusKey, changedId, check.serverRow); return false; }
-  }
-  saveMasterplans(list, statusKey, changedId);
-  return true;
+  try{ await sb.from("training_masterplans").delete().eq("id", id); }catch(e){ console.warn("Gagal hapus Master Plan di cloud:", e); }
 }
 function genId(prefix){ return prefix + "_" + Date.now().toString(36) + Math.random().toString(36).slice(2,8); }
-// UUID v4 asli (bukan prefix seperti genId) — dipakai untuk tabel yang kolom id-nya bertipe uuid
-// (mis. training_sessions), supaya insert client-side dari mode offline tetap valid di kedua tipe kolom (uuid/text).
-function genUUID(){
-  if(window.crypto && crypto.randomUUID) return crypto.randomUUID();
-  return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, c=>{
-    const r = Math.random()*16|0, v = c==="x" ? r : (r&0x3|0x8);
-    return v.toString(16);
-  });
-}
 
 const GOAL_OPTIONS = [
   "General Fitness","Hypertrophy","Maximal Strength","Strength Endurance","Power","Speed",
@@ -4164,67 +3848,6 @@ const MATRIX_COLOR = {
   High:     { Low:"var(--average)", Moderate:"var(--moderate)",High:"var(--poor)" }
 };
 function normLevel3(v){ return LEVEL3_OPTIONS.includes(v) ? v : "Moderate"; }
-
-/* ---------------- WEEK-TO-WEEK PROGRESSION & DELOAD SYSTEM ---------------- */
-const PROGRESSION_MODES = [
-  ["manual","Manual"],
-  ["percentage","Percentage Increase"],
-  ["linear","Linear Progression"],
-  ["wave","Wave Progression"],
-  ["step","Step Loading"]
-];
-const PROGRESSION_MODE_LABELS = Object.fromEntries(PROGRESSION_MODES);
-const DELOAD_REASONS = ["Recovery","Fatigue","Competition","Injury management","Planned deload","Coach decision"];
-
-function defaultProgressionConfig(){
-  return {
-    volume:{ mode:"manual", start:1000, pct:10, increment:100, waveWeeks:4, stepWeeks:3, stepIncrement:100 },
-    intensity:{ mode:"manual", start:70, pct:5, increment:3, waveWeeks:4, stepWeeks:3, stepIncrement:5 }
-  };
-}
-// Menghitung deret nilai per-minggu (Volume AU atau Intensity %) berdasarkan mode progresi yang dipilih coach.
-// Minggu yang ditandai Deload (mp.weeklyLoads[w].isDeload) otomatis diturunkan memakai persentase dari Deload System —
-// tapi hasilnya TIDAK mengunci apa pun: coach tetap bisa mengubah angka manual di tabel preview.
-function computeProgressionSeries(cfg, mp, reduceKey){
-  const out = {};
-  const totalWeeks = Number(mp.durationWeeks)||0;
-  if(!cfg || cfg.mode==="manual"){
-    for(let w=1; w<=totalWeeks; w++) out[w] = null;
-    return out;
-  }
-  let peak = Number(cfg.start)||0;
-  for(let w=1; w<=totalWeeks; w++){
-    const wl = mp.weeklyLoads && mp.weeklyLoads[w];
-    const isDL = !!(wl && wl.isDeload);
-    let val;
-    if(cfg.mode==="percentage"){
-      val = (w===1) ? (Number(cfg.start)||0) : peak * (1 + (Number(cfg.pct)||0)/100);
-    } else if(cfg.mode==="linear"){
-      val = (Number(cfg.start)||0) + (w-1) * (Number(cfg.increment)||0);
-    } else if(cfg.mode==="wave"){
-      const cyc = Math.max(2, Number(cfg.waveWeeks)||4);
-      const pos = (w-1) % cyc, cycNum = Math.floor((w-1)/cyc);
-      const cycleGrowth = 1 + cycNum * ((Number(cfg.pct)||0)/100);
-      const ramp = pos * (Number(cfg.pct)||10);
-      val = (Number(cfg.start)||0) * cycleGrowth * (1 + ramp/100);
-    } else if(cfg.mode==="step"){
-      const stepW = Math.max(1, Number(cfg.stepWeeks)||3);
-      const idx = Math.floor((w-1)/stepW);
-      val = (Number(cfg.start)||0) + idx * (Number(cfg.stepIncrement)||0);
-    } else {
-      val = Number(cfg.start)||0;
-    }
-    if(!isDL) peak = val;
-    if(isDL){
-      const pct = Number(wl.deload ? wl.deload[reduceKey] : NaN);
-      const basis = (cfg.mode==="percentage") ? peak : val;
-      val = basis * (1 - ((isFinite(pct) && pct>0) ? pct : 30)/100);
-    }
-    out[w] = Math.round(val*10)/10;
-  }
-  return out;
-}
-
 function emptyWeekLoad(week){
   return {
     week,
@@ -4233,12 +3856,9 @@ function emptyWeekLoad(week){
     intensity:{
       strength:{ metric:"pct1rm", value:"" }, power:{ metric:"pct1rm", value:"" },
       endurance:{ metric:"hrzone", value:"" }, sparring:{ metric:"rpe", value:"" },
-      saq:{ metric:"sprintpct", value:"" }, level:"Moderate",
-      overallPct:"" // Planned Intensity (%) — diisi otomatis oleh Week-to-Week Progression, tetap bisa diubah manual
+      saq:{ metric:"sprintpct", value:"" }, level:"Moderate"
     },
-    isDeload:false, recoveryNote:"", updatedAt:null,
-    // ---- Deload System (lihat bagian 6) — hanya berlaku ketika isDeload = true ----
-    deload:{ reason:"", volumeReductionPct:"", intensityReductionPct:"", frequencyReductionPct:"" }
+    isDeload:false, recoveryNote:"", updatedAt:null
   };
 }
 function getWeekLoad(mp, week){
@@ -4404,7 +4024,7 @@ function phaseForWeek(mp, week){ return mp.phases.find(p => week >= p.weekStart 
 /* ---- Phase management ---- */
 function openAddPhaseModal(mpId){ openModal("editPhase", {mpId, phaseId:null}); }
 function openEditPhaseModal(mpId, phaseId){ openModal("editPhase", {mpId, phaseId}); }
-async function submitPhase(mpId, phaseId){
+function submitPhase(mpId, phaseId){
   const errBox = document.getElementById("ph-err");
   const label = document.getElementById("ph-label").value.trim();
   const phaseType = document.getElementById("ph-type").value;
@@ -4436,9 +4056,7 @@ async function submitPhase(mpId, phaseId){
     mp.phases.push({ id: genId("ph"), ...patch });
   }
   mp.phases.sort((a,b)=>a.weekStart-b.weekStart);
-  setSaveStatus(`phase-${mpId}`, "saving");
-  const ok = await saveMasterplansWithConflictCheck(list, `phase-${mpId}`, mpId);
-  if(!ok) return; // konflik — modal Reload Latest/Keep Mine/Compare sudah tampil
+  saveMasterplans(list);
   closeModal(); render();
   showToast("Phase tersimpan");
 }
@@ -4447,7 +4065,7 @@ function deletePhase(mpId, phaseId){
   const list = loadMasterplans();
   const mp = list.find(m=>m.id===mpId); if(!mp) return;
   mp.phases = mp.phases.filter(p=>p.id!==phaseId);
-  saveMasterplans(list, `phase-${mpId}`, mpId);
+  saveMasterplans(list);
   render();
   showToast("Phase dihapus");
 }
@@ -4487,7 +4105,6 @@ function modalEditPhase(payload){
     </div>
     <div id="ph-err" class="err" style="display:none;"></div>
     <button class="btn" onclick="submitPhase('${payload.mpId}', ${payload.phaseId?`'${payload.phaseId}'`:null})">Simpan Phase</button>
-    <div style="margin-top:8px;text-align:center;">${saveStatusBadge(`phase-${payload.mpId}`)}</div>
   `;
 }
 
@@ -4592,10 +4209,8 @@ function modalWeekLoad(payload){
   const d = existing ? JSON.parse(JSON.stringify(existing)) : emptyWeekLoad(wk);
   const phase = phaseForWeek(mp, wk);
   return `
-    <div oninput="scheduleWeekLoadAutosave('${payload.mpId}',${wk})" onchange="scheduleWeekLoadAutosave('${payload.mpId}',${wk})">
     <div class="modal-head"><h3>Volume & Intensity — Minggu ${wk}</h3><button class="close-x" onclick="closeModal()">✕</button></div>
     <p class="helper" style="margin-top:-6px;">${weekDateRange(mp,wk)||''}${phase?` · Phase: ${phase.label}`:''}</p>
-    <div style="text-align:right;margin:-6px 0 6px;">${saveStatusBadge(`weekload-${wk}`)}</div>
 
     <div class="load-type-card">
       <h4>Volume</h4>
@@ -4646,28 +4261,6 @@ function modalWeekLoad(payload){
       <input type="checkbox" id="wl-deload" ${d.isDeload?'checked':''}/>
       <label style="margin:0;" for="wl-deload">Tandai minggu ini sebagai Deload / Recovery Week</label>
     </div>
-
-    <div class="load-type-card">
-      <h4>Deload Settings</h4>
-      <p class="helper" style="margin-top:-4px;">Hanya berlaku jika minggu ini ditandai sebagai Deload di atas. Intensity dapat tetap relatif tinggi (isi kecil/0) atau diturunkan sesuai pilihan pelatih.</p>
-      <div class="field"><label>Alasan Deload</label>
-        <select id="wl-deload-reason">
-          <option value="">-</option>
-          ${DELOAD_REASONS.map(r=>`<option value="${r}" ${d.deload && d.deload.reason===r?'selected':''}>${r}</option>`).join("")}
-        </select>
-      </div>
-      <div class="field-row3">
-        <div class="field"><label>Volume Reduction (%)</label><input id="wl-deload-vol" type="number" min="0" max="100" value="${d.deload?d.deload.volumeReductionPct:''}" placeholder="cth. 30-40"/></div>
-        <div class="field"><label>Intensity Reduction (%)</label><input id="wl-deload-int" type="number" min="0" max="100" value="${d.deload?d.deload.intensityReductionPct:''}" placeholder="cth. 0-20"/></div>
-        <div class="field"><label>Frequency Reduction (%)</label><input id="wl-deload-freq" type="number" min="0" max="100" value="${d.deload?d.deload.frequencyReductionPct:''}" placeholder="cth. 20-30"/></div>
-      </div>
-      <p class="helper" style="margin:0;">Contoh: Normal Volume = 100% · Deload Volume = 60–70% (isi Volume Reduction ≈ 30-40%).</p>
-    </div>
-
-    <div class="field"><label>Planned Intensity Keseluruhan (%) — dipakai untuk Planned vs Actual</label>
-      <input id="wl-int-overall" type="number" min="0" max="100" step="0.1" value="${d.intensity.overallPct!=null?d.intensity.overallPct:''}" placeholder="cth. 75"/>
-    </div>
-
     <div class="field"><label>Catatan Recovery (opsional)</label><textarea id="wl-recnote" rows="2">${d.recoveryNote||''}</textarea></div>
 
     ${(() => {
@@ -4677,8 +4270,6 @@ function modalWeekLoad(payload){
 
     <div id="wl-err" class="err" style="display:none;margin-top:10px;"></div>
     <button class="btn" style="margin-top:10px;" onclick="submitWeekLoad('${payload.mpId}', ${wk})">Simpan Volume & Intensity Minggu ${wk}</button>
-    <p class="helper" style="margin-top:6px;text-align:center;">Perubahan juga otomatis tersimpan ±800ms setelah berhenti mengetik.</p>
-    </div>
   `;
 }
 let _wlMetricState = {};
@@ -4702,9 +4293,14 @@ function renderMatrixPreview(volLevel, intLevel){
     ${rows.map(r=>`<div class="vi-row-lbl">${r}</div>${cols.map(c=>`<div class="vi-cell ${volLevel===r&&intLevel===c?'active':''}" style="background:${MATRIX_COLOR[r][c]};"></div>`).join("")}`).join("")}
   </div><div class="vi-axis-label">INTENSITY →</div>`;
 }
-function readWeekLoadForm(week, existing){
+function submitWeekLoad(mpId, week){
+  const errBox = document.getElementById("wl-err");
+  const list = loadMasterplans();
+  const mp = list.find(m=>m.id===mpId); if(!mp) return;
+  mp.weeklyLoads = mp.weeklyLoads || {};
+  const existing = mp.weeklyLoads[week] || emptyWeekLoad(week);
   const val = id => document.getElementById(id) ? document.getElementById(id).value : "";
-  return {
+  const w = {
     week,
     volume:{
       sessions:val("wl-sessions"), sets:val("wl-sets"), reps:val("wl-reps"),
@@ -4719,56 +4315,19 @@ function readWeekLoadForm(week, existing){
       endurance:{ metric: existing.intensity.endurance?.metric||"hrzone", value: val("wl-int-endurance") },
       sparring:{ metric: existing.intensity.sparring?.metric||"rpe", value: val("wl-int-sparring") },
       saq:{ metric: existing.intensity.saq?.metric||"sprintpct", value: val("wl-int-saq") },
-      level: val("wl-intlevel") || "Moderate",
-      overallPct: val("wl-int-overall")
+      level: val("wl-intlevel") || "Moderate"
     },
     isDeload: document.getElementById("wl-deload") ? document.getElementById("wl-deload").checked : false,
-    deload:{
-      reason: val("wl-deload-reason"),
-      volumeReductionPct: val("wl-deload-vol"),
-      intensityReductionPct: val("wl-deload-int"),
-      frequencyReductionPct: val("wl-deload-freq")
-    },
     recoveryNote: val("wl-recnote"),
     updatedAt: Date.now()
   };
-}
-async function submitWeekLoad(mpId, week){
-  const errBox = document.getElementById("wl-err");
-  const list = loadMasterplans();
-  const mp = list.find(m=>m.id===mpId); if(!mp) return;
-  mp.weeklyLoads = mp.weeklyLoads || {};
-  const existing = mp.weeklyLoads[week] || emptyWeekLoad(week);
-  const w = readWeekLoadForm(week, existing);
   if(!w.volume.level || !w.intensity.level){
     errBox.style.display="block"; errBox.textContent="Pilih Volume Level dan Intensity Level."; return;
   }
   mp.weeklyLoads[week] = w;
-  setSaveStatus(`weekload-${week}`, "saving");
-  const ok = await saveMasterplansWithConflictCheck(list, `weekload-${week}`, mpId);
-  if(!ok) return;
+  saveMasterplans(list);
   closeModal(); render();
   showToast(`Volume & Intensity Minggu ${week} tersimpan`);
-}
-// Auto Save (bagian 12): dipanggil lewat event delegation setiap field wl-* berubah.
-// Debounce ±800ms supaya tidak request Supabase pada tiap karakter yang diketik.
-const _wlAutosaveDebounced = {};
-function scheduleWeekLoadAutosave(mpId, week){
-  const key = `${mpId}:${week}`;
-  if(!document.getElementById("wl-err")) return; // modal sudah tertutup
-  if(!_wlAutosaveDebounced[key]) _wlAutosaveDebounced[key] = debounce(()=>silentSaveWeekLoad(mpId, week), 800);
-  setSaveStatus(`weekload-${week}`, "saving");
-  _wlAutosaveDebounced[key]();
-}
-function silentSaveWeekLoad(mpId, week){
-  if(!document.getElementById("wl-err")) return; // modal sudah ditutup sebelum debounce selesai
-  const list = loadMasterplans();
-  const mp = list.find(m=>m.id===mpId); if(!mp) return;
-  mp.weeklyLoads = mp.weeklyLoads || {};
-  const existing = mp.weeklyLoads[week] || emptyWeekLoad(week);
-  const w = readWeekLoadForm(week, existing);
-  mp.weeklyLoads[week] = w;
-  saveMasterplans(list, `weekload-${week}`, mpId); // autosave tidak memicu Conflict Handling (hanya klik Simpan yang cek konflik)
 }
 
 /* ==========================================================
@@ -4802,18 +4361,21 @@ function emptyDpExercise(){
 function emptyDpBlock(category){ return { id: genId("blk"), category, exercises: [] }; }
 function emptyDailyPlan(dateStr){
   return {
+    id: genId("dp"),
     date: dateStr, title:"", isRestDay:false,
     blocks: DP_BLOCK_CATEGORIES.map(c=>emptyDpBlock(c)),
-    status:"planned", completedAt:null, actualDuration:null, actualRPE:null, notes:""
+    status:"planned", completedAt:null, actualDuration:null, actualRPE:null, notes:"",
+    history: [{ action:"created", at: Date.now(), note:"Program dibuat" }],
+    duplicatedFrom: null
   };
 }
 function getDailyPlan(mp, dateStr){ return (mp.dailyPlans && mp.dailyPlans[dateStr]) || null; }
-function saveDailyPlan(mpId, plan, statusKey){
+function saveDailyPlan(mpId, plan){
   const list = loadMasterplans();
   const mp = list.find(m=>m.id===mpId); if(!mp) return;
   mp.dailyPlans = mp.dailyPlans || {};
   mp.dailyPlans[plan.date] = plan;
-  saveMasterplans(list, statusKey || `dailyplan-${plan.date}`, mpId);
+  saveMasterplans(list);
 }
 function deleteDailyPlan(mpId, dateStr){
   if(!confirm("Hapus rencana sesi untuk hari ini?")) return;
@@ -4847,7 +4409,7 @@ function dpPlanBody(mp, plan, dateStr, compact){
   }
   if(plan.isRestDay){
     return `<div class="chart-empty">🛌 Rest Day${plan.notes?` — ${plan.notes}`:""}</div>
-      ${isStaff() ? `<button class="btn ghost" style="margin-top:10px;" onclick="openDailyPlanBuilder('${mp.id}','${dateStr}')">Edit Rencana</button>` : ""}`;
+      ${compact && isStaff() ? `<button class="btn ghost" style="margin-top:10px;" onclick="openDailyPlanBuilder('${mp.id}','${dateStr}')">Edit Rencana</button>` : ""}`;
   }
   const blocks = plan.blocks.filter(b=>b.exercises.length>0);
   return `
@@ -4858,7 +4420,6 @@ function dpPlanBody(mp, plan, dateStr, compact){
     ${plan.status==='completed' ? `
       <div class="helper" style="margin-top:8px;">Actual: <b>${plan.actualDuration||0} menit</b> · Session RPE <b>${plan.actualRPE||'-'}</b></div>
     ` : `
-      ${!compact && isStaff() ? `<button class="btn ghost" style="margin-top:6px;" onclick="openDailyPlanBuilder('${mp.id}','${dateStr}')">Edit Rencana</button>` : ""}
       ${blocks.length>0 ? `<button class="btn" style="margin-top:10px;" onclick="openCompleteSessionModal('${mp.id}','${dateStr}')">✓ Tandai Sesi Selesai</button>` : ""}
     `}
   `;
@@ -4911,6 +4472,261 @@ function toggleDpExerciseComplete(mpId, dateStr, blockId, exId){
   render();
 }
 
+/* ==========================================================
+   DAILY TRAINING PLANNER — EDIT / DUPLICATE / HISTORY (modul tambahan)
+   Tidak mengubah fitur Daily Planner yang sudah ada; hanya menambah
+   kemampuan Edit Program, Duplicate Program (ke tanggal/atlet/minggu/
+   phase lain), Duplicate Exercise, Duplicate Week, Duplicate Mesocycle,
+   Program History, dan Auto Volume Calculation.
+========================================================== */
+
+/* ---- Volume otomatis (Volume Load = Sets x Reps x Load, dst) ---- */
+function dpVolumeText(ex, category){
+  if(category==="Strength"){
+    const sets=Number(ex.sets)||0, load=Number(ex.load)||0;
+    const reps=Number(String(ex.reps||"").replace(/[^0-9.]/g,""))||0;
+    if(sets && reps && load) return `Volume Load: ${(sets*reps*load).toLocaleString("id-ID")} kg`;
+    if(sets && reps && ex.pct1rm) return `Estimasi: ${sets*reps} reps @ ${ex.pct1rm}% 1RM (isi Load untuk hitung Volume Load)`;
+    return "Volume Load: —";
+  }
+  if(category==="Conditioning"){
+    const sets=Number(ex.sets)||0, dur=Number(ex.duration)||0, dist=Number(ex.distance)||0;
+    const parts=[];
+    if(sets && dur) parts.push(`Total Durasi: ${sets*dur}`);
+    if(sets && dist) parts.push(`Total Distance: ${sets*dist}`);
+    return parts.length ? parts.join(" · ") : "Total volume: —";
+  }
+  return "";
+}
+function dpRecalcVolume(blockIdx, i){
+  if(!dpDraft) return;
+  const ex = dpDraft.blocks[blockIdx].exercises[i];
+  const cat = dpDraft.blocks[blockIdx].category;
+  const el = document.getElementById(`vol-${blockIdx}-${i}`);
+  if(el) el.textContent = dpVolumeText(ex, cat);
+}
+
+/* ---- Duplicate Exercise (item-level, di dalam draft edit) ---- */
+function dpDuplicateExercise(blockIdx, i){
+  const src = dpDraft.blocks[blockIdx].exercises[i];
+  const clone = JSON.parse(JSON.stringify(src));
+  clone.id = genId("ex");
+  clone.completed = false;
+  dpDraft.blocks[blockIdx].exercises.splice(i+1, 0, clone);
+  render();
+}
+
+/* ---- Program History ---- */
+function dpHistLabel(action){
+  return { created:"Dibuat", duplicated:"Diduplikasi", edited:"Diedit" }[action] || action;
+}
+function dpHistoryBlock(d){
+  if(!Array.isArray(d.history) || !d.history.length) return "";
+  return `
+    <div class="chart-card" style="margin-bottom:14px;">
+      <h3>Program History</h3>
+      ${d.history.slice().reverse().slice(0,6).map(h=>`
+        <div class="helper" style="margin:0 0 4px;">${dpHistLabel(h.action)}: ${new Date(h.at).toLocaleString("id-ID")}${h.note?` — ${h.note}`:""}</div>
+      `).join("")}
+      ${d.duplicatedFrom ? `
+        <div class="helper" style="margin-top:6px;">
+          Duplicated from: <b>${d.duplicatedFrom.title || "Program"}</b> (${dpFmtDate(d.duplicatedFrom.date)}${d.duplicatedFrom.athleteName?`, ${d.duplicatedFrom.athleteName}`:""})
+          ${d.duplicatedFrom.mpId===d.mpId ? ` · <span style="color:var(--turquoise-dark);font-weight:700;cursor:pointer;" onclick="dpViewOriginal('${d.duplicatedFrom.mpId}','${d.duplicatedFrom.date}')">View Original Program</span>` : ""}
+        </div>
+      ` : ""}
+    </div>
+  `;
+}
+function dpViewOriginal(mpId, dateStr){
+  closeModal();
+  state.mpId = mpId;
+  state.mpSection = "daily";
+  state.dpWeekStart = mondayOf(dateStr);
+  state.dpSelectedDate = dateStr;
+  render();
+}
+
+/* ---- Deep copy independen (ID baru untuk plan, block, exercise) ---- */
+function deepCloneDailyPlan(plan, newDate, origin){
+  const clone = JSON.parse(JSON.stringify(plan));
+  clone.id = genId("dp");
+  clone.date = newDate;
+  clone.status = "planned";
+  clone.completedAt = null; clone.actualDuration = null; clone.actualRPE = null;
+  (clone.blocks||[]).forEach(b=>{
+    b.id = genId("blk");
+    (b.exercises||[]).forEach(e=>{ e.id = genId("ex"); e.completed = false; });
+  });
+  clone.duplicatedFrom = { mpId: origin.mpId, date: plan.date, title: plan.title || "", athleteName: origin.athleteName || "" };
+  clone.history = [{ action:"duplicated", at: Date.now(), note: `Diduplikasi dari ${plan.title||"Sesi"} (${dpFmtDate(plan.date)})` }];
+  return clone;
+}
+function weekStartDate(mp, weekNum){
+  const d = new Date(mp.startDate+"T00:00:00");
+  d.setDate(d.getDate() + (weekNum-1)*7);
+  return d.toISOString().slice(0,10);
+}
+
+/* ---- Duplicate Program (ke tanggal / atlet / minggu / phase lain) ---- */
+let dupDraft = null;
+function openDuplicateProgramModal(mpId, dateStr){
+  const list = loadMasterplans();
+  const mp = list.find(m=>m.id===mpId); if(!mp) return;
+  const plan = getDailyPlan(mp, dateStr); if(!plan) return;
+  dupDraft = {
+    sourceMpId: mpId, sourceDate: dateStr,
+    newName: (plan.title || "Sesi Latihan") + " (Copy)",
+    newDate: addDaysISO(dateStr, 7),
+    targetMpId: mpId, phaseNote: ""
+  };
+  openModal("duplicateProgram", {mpId, dateStr});
+}
+function modalDuplicateProgram(payload){
+  const list = loadMasterplans();
+  const srcMp = list.find(m=>m.id===payload.mpId);
+  const srcPlan = srcMp ? getDailyPlan(srcMp, payload.dateStr) : null;
+  if(!srcMp || !srcPlan){
+    return `<div class="modal-head"><h3>Duplicate Program</h3><button class="close-x" onclick="closeModal()">✕</button></div><p class="helper">Program tidak ditemukan.</p>`;
+  }
+  const targetMp = list.find(m=>m.id===dupDraft.targetMpId) || srcMp;
+  const weekOpts = Array.from({length: targetMp.durationWeeks||1}, (_,i)=>i+1);
+  return `
+    <div class="modal-head"><h3>📋 Duplicate Program</h3><button class="close-x" onclick="closeModal()">✕</button></div>
+    <p class="helper">Original Program: <b>${srcPlan.title || "Sesi Latihan"}</b> — ${dpFmtDate(srcPlan.date)}</p>
+    <div class="field"><label>New Program Name</label><input type="text" id="dup-name" value="${dupDraft.newName}" oninput="dupDraft.newName=this.value"/></div>
+    <div class="field"><label>Athlete (Master Plan tujuan)</label>
+      <select id="dup-athlete" onchange="dupChangeAthlete(this.value)">
+        ${list.map(m=>`<option value="${m.id}" ${m.id===dupDraft.targetMpId?"selected":""}>${m.athleteName||m.name}</option>`).join("")}
+      </select>
+    </div>
+    <div class="field"><label>Training Week (opsional, otomatis isi tanggal)</label>
+      <select id="dup-week" onchange="dupChangeWeek(this.value)">
+        <option value="">— pilih manual di New Date —</option>
+        ${targetMp.startDate ? weekOpts.map(w=>`<option value="${w}">Week ${w} (${weekDateRange(targetMp,w)||""})</option>`).join("") : ""}
+      </select>
+    </div>
+    <div class="field"><label>New Date</label><input type="date" id="dup-date" value="${dupDraft.newDate}" oninput="dupDraft.newDate=this.value"/></div>
+    <div class="field"><label>Training Phase (catatan, opsional)</label>
+      <select id="dup-phase" onchange="dupDraft.phaseNote=this.value">
+        <option value="">-</option>
+        ${(targetMp.phases||[]).map(p=>`<option value="${p.label}">${p.label}</option>`).join("")}
+      </select>
+    </div>
+    <div id="dup-err" class="err" style="display:none;"></div>
+    <div style="display:flex;gap:10px;margin-top:14px;">
+      <button class="btn secondary" onclick="closeModal()">CANCEL</button>
+      <button class="btn" onclick="submitDuplicateProgram()">DUPLICATE PROGRAM</button>
+    </div>
+  `;
+}
+function dupChangeAthlete(mpId){
+  dupDraft.targetMpId = mpId;
+  const modalEl = document.querySelector(".modal");
+  if(modalEl) modalEl.innerHTML = modalDuplicateProgram(state.modal.payload);
+}
+function dupChangeWeek(weekStr){
+  const w = Number(weekStr); if(!w) return;
+  const list = loadMasterplans();
+  const targetMp = list.find(m=>m.id===dupDraft.targetMpId);
+  if(!targetMp || !targetMp.startDate) return;
+  const srcDow = new Date(dupDraft.sourceDate+"T00:00:00").getDay();
+  const dowIdx = srcDow===0 ? 6 : srcDow-1; // 0 = Senin
+  dupDraft.newDate = addDaysISO(weekStartDate(targetMp, w), dowIdx);
+  const modalEl = document.querySelector(".modal");
+  if(modalEl) modalEl.innerHTML = modalDuplicateProgram(state.modal.payload);
+}
+function submitDuplicateProgram(){
+  const errBox = document.getElementById("dup-err");
+  const name = (document.getElementById("dup-name")?.value || dupDraft.newName || "").trim();
+  const newDate = document.getElementById("dup-date")?.value || dupDraft.newDate;
+  if(!name){ errBox.style.display="block"; errBox.textContent="Isi nama program baru."; return; }
+  if(!newDate){ errBox.style.display="block"; errBox.textContent="Pilih tanggal baru."; return; }
+
+  const list = loadMasterplans();
+  const srcMp = list.find(m=>m.id===dupDraft.sourceMpId);
+  const srcPlan = srcMp ? getDailyPlan(srcMp, dupDraft.sourceDate) : null;
+  const targetMp = list.find(m=>m.id===dupDraft.targetMpId);
+  if(!srcPlan || !targetMp){ errBox.style.display="block"; errBox.textContent="Data program atau atlet tujuan tidak ditemukan."; return; }
+  if(getDailyPlan(targetMp, newDate) && !confirm("Sudah ada rencana sesi di tanggal tujuan. Timpa dengan hasil duplikasi?")) return;
+
+  const clone = deepCloneDailyPlan(srcPlan, newDate, { mpId: dupDraft.sourceMpId, athleteName: srcMp.athleteName });
+  clone.title = name;
+  if(dupDraft.phaseNote) clone.history.push({ action:"duplicated", at: Date.now(), note:`Ditempatkan pada Training Phase: ${dupDraft.phaseNote}` });
+
+  targetMp.dailyPlans = targetMp.dailyPlans || {};
+  targetMp.dailyPlans[newDate] = clone;
+  saveMasterplans(list);
+  errBox.style.display="none";
+  closeModal();
+  showToast("Program berhasil diduplikasi.");
+  // Duplicate & Edit: langsung buka editor untuk hasil duplikasi; program original tidak berubah.
+  openDailyPlanBuilder(targetMp.id, newDate);
+}
+
+/* ---- Duplicate Week (semua program dalam minggu yang tampil -> minggu berikutnya) ---- */
+function duplicateCurrentWeek(mpId){
+  const list = loadMasterplans();
+  const mp = list.find(m=>m.id===mpId); if(!mp) return;
+  const monday = state.dpWeekStart;
+  if(!confirm("Duplikasi seluruh program pada minggu ini ke minggu berikutnya?")) return;
+  const dates = weekDatesFrom(monday);
+  const targetMonday = addDaysISO(monday, 7);
+  let count = 0;
+  dates.forEach((d, idx)=>{
+    const plan = getDailyPlan(mp, d); if(!plan) return;
+    const targetDate = addDaysISO(targetMonday, idx);
+    const clone = deepCloneDailyPlan(plan, targetDate, { mpId, athleteName: mp.athleteName });
+    mp.dailyPlans = mp.dailyPlans || {};
+    mp.dailyPlans[targetDate] = clone;
+    count++;
+  });
+  saveMasterplans(list);
+  state.dpWeekStart = targetMonday; state.dpSelectedDate = targetMonday;
+  render();
+  showToast(count ? `${count} program berhasil diduplikasi ke minggu berikutnya.` : "Tidak ada program pada minggu ini untuk diduplikasi.");
+}
+
+/* ---- Duplicate Mesocycle (seluruh blok minggu, deep copy independen) ---- */
+function duplicateMesocycle(mpId, mesoIndex){
+  const list = loadMasterplans();
+  const mp = list.find(m=>m.id===mpId); if(!mp) return;
+  const src = (mp.mesocycles||[])[mesoIndex]; if(!src) return;
+  if(!confirm(`Duplikasi Mesocycle "${src.blockLabel}" beserta seluruh Daily Plan di dalamnya sebagai blok baru yang independen?`)) return;
+
+  const lenWeeks = src.weekEnd - src.weekStart + 1;
+  const lastWeek = Math.max(mp.durationWeeks||0, ...mp.mesocycles.map(m=>m.weekEnd));
+  const newStart = lastWeek + 1;
+  const newEnd = newStart + lenWeeks - 1;
+  const weekShift = newStart - src.weekStart;
+
+  const newMeso = { ...src, id: genId("meso"), weekStart:newStart, weekEnd:newEnd, blockLabel:`${src.blockLabel} (Copy)` };
+  mp.mesocycles.push(newMeso);
+
+  if(newEnd > (mp.durationWeeks||0)){
+    mp.durationWeeks = newEnd;
+    if(mp.phases && mp.phases.length) mp.phases[mp.phases.length-1].weekEnd = newEnd;
+  }
+
+  let copiedPlans = 0;
+  if(mp.startDate){
+    for(let w=src.weekStart; w<=src.weekEnd; w++){
+      const wMonday = weekStartDate(mp, w);
+      weekDatesFrom(wMonday).forEach((d, idx)=>{
+        const plan = getDailyPlan(mp, d); if(!plan) return;
+        const targetDate = addDaysISO(weekStartDate(mp, w + weekShift), idx);
+        const clone = deepCloneDailyPlan(plan, targetDate, { mpId, athleteName: mp.athleteName });
+        clone.duplicatedFrom.note = `Mesocycle "${src.blockLabel}" → "${newMeso.blockLabel}"`;
+        mp.dailyPlans = mp.dailyPlans || {};
+        mp.dailyPlans[targetDate] = clone;
+        copiedPlans++;
+      });
+    }
+  }
+  saveMasterplans(list);
+  render();
+  showToast(`Mesocycle diduplikasi (Minggu ${newStart}-${newEnd})${copiedPlans?`, ${copiedPlans} program disalin`:""}.`);
+}
+
 /* ---- Section: Daily Planner (week strip + detail hari terpilih) ---- */
 function mpDailySection(mp, wk){
   if(!state.dpWeekStart) state.dpWeekStart = mondayOf(todayISO());
@@ -4920,12 +4736,12 @@ function mpDailySection(mp, wk){
   const selected = state.dpSelectedDate;
   const plan = getDailyPlan(mp, selected);
   return `
-    ${isStaff() ? `<button class="btn ghost" style="margin-bottom:10px;" onclick="openWeekTemplateModal('${mp.id}')">⚡ Generate Sesi Mingguan (Training Session Generator)</button>` : ""}
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;">
       <button class="btn ghost" style="width:auto;padding:4px 10px;" onclick="dpChangeWeek('${mp.id}',-1)">‹ Minggu Lalu</button>
       <span class="helper" style="margin:0;">${dpFmtDate(dates[0]).split(',')[1]||''} – ${dpFmtDate(dates[6]).split(',')[1]||''}</span>
       <button class="btn ghost" style="width:auto;padding:4px 10px;" onclick="dpChangeWeek('${mp.id}',1)">Minggu Depan ›</button>
     </div>
+    ${isStaff() ? `<button class="btn ghost small" style="width:auto;margin-bottom:12px;" onclick="duplicateCurrentWeek('${mp.id}')">📋 Duplicate Week → Minggu Berikutnya</button>` : ""}
     <div style="display:flex;gap:6px;margin-bottom:16px;overflow-x:auto;">
       ${dates.map(d=>{
         const p = getDailyPlan(mp, d);
@@ -4946,7 +4762,13 @@ function mpDailySection(mp, wk){
     <div class="chart-card">
       <h3>${dpFmtDate(selected)}</h3>
       ${dpPlanBody(mp, plan, selected, false)}
-      ${plan && isStaff() ? `<span class="delete-link" style="display:block;margin-top:10px;" onclick="deleteDailyPlan('${mp.id}','${selected}')">🗑 Hapus Rencana Hari Ini</span>` : ""}
+      ${plan && isStaff() ? `
+        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px;">
+          <button class="btn secondary small" style="width:auto;" onclick="openDailyPlanBuilder('${mp.id}','${selected}')">✏️ Edit Program</button>
+          <button class="btn ghost small" style="width:auto;" onclick="openDuplicateProgramModal('${mp.id}','${selected}')">📋 Duplicate Program</button>
+          <button class="btn danger small" style="width:auto;" onclick="deleteDailyPlan('${mp.id}','${selected}')">🗑 Delete</button>
+        </div>
+      ` : ""}
     </div>
   `;
 }
@@ -4968,7 +4790,7 @@ function dpAddExercise(blockIdx){ dpDraft.blocks[blockIdx].exercises.push(emptyD
 function dpRemoveExercise(blockIdx, i){ dpDraft.blocks[blockIdx].exercises.splice(i,1); render(); }
 function dpUpdateExercise(blockIdx, i, field, val){ dpDraft.blocks[blockIdx].exercises[i][field] = val; }
 function dpExerciseFields(ex, blockIdx, i, category){
-  const set = (f,v)=>`dpUpdateExercise(${blockIdx},${i},'${f}',this.value)`;
+  const set = (f,v)=>`dpUpdateExercise(${blockIdx},${i},'${f}',this.value); dpRecalcVolume(${blockIdx},${i})`;
   if(category==="Combat"){
     return `
       <div class="field"><label>Nama (cth. Pad Work)</label><input type="text" value="${ex.name}" oninput="${set('name')}"/></div>
@@ -4998,6 +4820,7 @@ function dpExerciseFields(ex, blockIdx, i, category){
         <div class="field"><label>Reps</label><input type="text" value="${ex.reps}" oninput="${set('reps')}"/></div>
         <div class="field"><label>Load (kg)</label><input type="number" min="0" value="${ex.load}" oninput="${set('load')}"/></div>
       </div>
+      <div class="helper" id="vol-${blockIdx}-${i}" style="margin:-8px 0 10px;">${dpVolumeText(ex,"Strength")}</div>
       <div class="field-row3">
         <div class="field"><label>% 1RM</label><input type="number" min="0" max="100" value="${ex.pct1rm}" oninput="${set('pct1rm')}"/></div>
         <div class="field"><label>RPE Target</label><input type="number" min="0" max="10" value="${ex.rpeTarget}" oninput="${set('rpeTarget')}"/></div>
@@ -5018,6 +4841,7 @@ function dpExerciseFields(ex, blockIdx, i, category){
         <div class="field"><label>Durasi</label><input type="text" value="${ex.duration}" oninput="${set('duration')}" placeholder="cth. 2 min"/></div>
         <div class="field"><label>Distance</label><input type="text" value="${ex.distance}" oninput="${set('distance')}" placeholder="opsional"/></div>
       </div>
+      <div class="helper" id="vol-${blockIdx}-${i}" style="margin:-8px 0 10px;">${dpVolumeText(ex,"Conditioning")}</div>
       <div class="field-row">
         <div class="field"><label>Rest Interval</label><input type="text" value="${ex.rest}" oninput="${set('rest')}" placeholder="cth. 1 min"/></div>
         <div class="field"><label>RPE Target</label><input type="number" min="0" max="10" value="${ex.rpeTarget}" oninput="${set('rpeTarget')}"/></div>
@@ -5039,9 +4863,8 @@ function dpExerciseFields(ex, blockIdx, i, category){
 function modalEditDailyPlan(payload){
   const d = dpDraft;
   return `
-    <div oninput="scheduleDpAutosave()" onchange="scheduleDpAutosave()">
-    <div class="modal-head"><h3>Rencana Sesi — ${dpFmtDate(d.date)}</h3><button class="close-x" onclick="closeModal()">✕</button></div>
-    <div style="text-align:right;margin:-6px 0 6px;">${saveStatusBadge("dailyplan")}</div>
+    <div class="modal-head"><h3>✏️ Edit Program — ${dpFmtDate(d.date)}</h3><button class="close-x" onclick="closeModal()">✕</button></div>
+    ${dpHistoryBlock(d)}
     <div class="field" style="display:flex;align-items:center;gap:8px;">
       <input type="checkbox" id="dp-rest" ${d.isRestDay?'checked':''} onchange="dpToggleRestDay()"/>
       <label for="dp-rest" style="margin:0;">Tandai sebagai Rest Day</label>
@@ -5056,48 +4879,62 @@ function modalEditDailyPlan(payload){
           <div class="chart-card" style="margin-bottom:10px;">
             ${dpExerciseFields(ex, bi, i, b.category)}
             <div class="field" style="display:flex;align-items:center;gap:8px;margin-top:4px;">
-              <input type="checkbox" ${ex.completed?'checked':''} onchange="dpUpdateExercise(${bi},${i},'completed',this.checked); this.defaultChecked=this.checked; scheduleDpAutosave();" />
+              <input type="checkbox" ${ex.completed?'checked':''} onchange="dpUpdateExercise(${bi},${i},'completed',this.checked); this.defaultChecked=this.checked;" />
               <label style="margin:0;">Sudah selesai (completion status)</label>
             </div>
-            <span class="delete-link" onclick="dpRemoveExercise(${bi},${i})">🗑 Hapus item</span>
+            <div style="display:flex;gap:16px;justify-content:center;margin-top:14px;">
+              <span style="color:var(--turquoise-dark);font-weight:600;font-size:12.5px;cursor:pointer;" onclick="dpDuplicateExercise(${bi},${i})">📋 Duplicate</span>
+              <span class="delete-link" style="margin:0;display:inline;" onclick="dpRemoveExercise(${bi},${i})">🗑 Hapus item</span>
+            </div>
           </div>
         `).join("")}
         <button class="btn ghost" onclick="dpAddExercise(${bi})">+ Tambah ${b.category}</button>
       `).join("")}
     `}
     <div id="dp-err" class="err" style="display:none;margin-top:10px;"></div>
-    <button class="btn" style="margin-top:14px;" onclick="submitDailyPlan()">Simpan Rencana Sesi</button>
-    <p class="helper" style="margin-top:6px;text-align:center;">Exercise, Sets, Reps, Load, RPE, RIR & Notes otomatis tersimpan ±800ms setelah berhenti mengetik.</p>
+    <div style="display:flex;gap:10px;margin-top:14px;">
+      <button class="btn secondary" onclick="closeModal()">CANCEL</button>
+      <button class="btn" onclick="submitDailyPlan()">SAVE CHANGES</button>
     </div>
   `;
-}
-// Auto Save (bagian 12) untuk Daily Planner — Exercise/Sets/Reps/Load/RPE/RIR/Notes.
-const _dpAutosaveDebounced = debounce(()=>silentSaveDailyPlan(), 800);
-function scheduleDpAutosave(){
-  if(!dpDraft) return;
-  setSaveStatus("dailyplan", "saving");
-  _dpAutosaveDebounced();
-}
-function silentSaveDailyPlan(){
-  if(!dpDraft) return;
-  const mpId = dpDraft.mpId;
-  const plan = JSON.parse(JSON.stringify(dpDraft));
-  delete plan.mpId;
-  saveDailyPlan(mpId, plan, "dailyplan");
 }
 function submitDailyPlan(){
   const errBox = document.getElementById("dp-err");
   if(!dpDraft.isRestDay && !dpDraft.title.trim()){
     errBox.style.display="block"; errBox.textContent="Isi judul sesi, atau tandai sebagai Rest Day."; return;
   }
+  // Validasi format angka: RPE/RIR 0-10, dan Sets/Load/Rounds/%1RM tidak boleh negatif.
+  if(!dpDraft.isRestDay){
+    for(const b of dpDraft.blocks){
+      for(const ex of b.exercises){
+        if(!ex.name) continue;
+        for(const f of ["rpeTarget","rirTarget"]){
+          if(ex[f]!=="" && ex[f]!=null && (isNaN(Number(ex[f])) || Number(ex[f])<0 || Number(ex[f])>10)){
+            errBox.style.display="block";
+            errBox.textContent = `${ex.name}: ${f==="rpeTarget"?"RPE":"RIR"} harus berupa angka 0-10.`;
+            return;
+          }
+        }
+        for(const f of ["sets","load","rounds","pct1rm"]){
+          if(ex[f]!=="" && ex[f]!=null && (isNaN(Number(ex[f])) || Number(ex[f])<0)){
+            errBox.style.display="block";
+            errBox.textContent = `${ex.name}: nilai ${f} tidak valid (harus angka, tidak boleh negatif).`;
+            return;
+          }
+        }
+      }
+    }
+  }
+  errBox.style.display="none";
   const mpId = dpDraft.mpId;
   const plan = JSON.parse(JSON.stringify(dpDraft));
   delete plan.mpId;
-  setSaveStatus("dailyplan", "saving");
-  saveDailyPlan(mpId, plan, "dailyplan");
+  plan.history = Array.isArray(plan.history) ? plan.history : [];
+  plan.history.push({ action:"edited", at: Date.now(), note: plan.isRestDay ? "Ditandai Rest Day" : `Disimpan: ${plan.title}` });
+  saveDailyPlan(mpId, plan);
   dpDraft = null;
   closeModal(); render();
-  showToast("Rencana sesi tersimpan");
+  showToast("Perubahan tersimpan");
 }
 
 /* ---- Complete Session -> update plan + kirim data aktual ke Training Load ---- */
@@ -5123,7 +4960,6 @@ function modalCompleteSession(payload){
     <p class="helper">Data ini akan otomatis masuk ke Training Load (Acute/Chronic Load, ACWR) atlet.</p>
     <div id="cs-err" class="err" style="display:none;"></div>
     <button class="btn" onclick="submitCompleteSession('${payload.mpId}','${payload.date}')">Simpan & Hitung Training Load</button>
-    <div style="margin-top:8px;text-align:center;">${saveStatusBadge("completesession")}</div>
   `;
 }
 async function submitCompleteSession(mpId, dateStr){
@@ -5161,31 +4997,26 @@ async function submitCompleteSession(mpId, dateStr){
   }
 
   const insertObj = {
-    id: genUUID(), athlete_id: mp.athleteId, session_date: dateStr, session_type: sessionType,
-    duration_minutes: duration, session_rpe: rpe, notes: `Dari Daily Plan: ${plan.title}`,
-    created_by: (cache.profile && cache.profile.id) || null, updated_by: (cache.profile && cache.profile.id) || null,
-    updated_at: new Date().toISOString()
+    athlete_id: mp.athleteId, session_date: dateStr, session_type: sessionType,
+    duration_minutes: duration, session_rpe: rpe, notes: `Dari Daily Plan: ${plan.title}`
   };
   if(strengthPayload) insertObj.strength_data = strengthPayload;
 
-  // cloudUpsert: Update Supabase (single source of truth) + status badge Saving/Saved/Failed;
-  // kalau offline/gagal, otomatis masuk Sync Queue (IndexedDB) dan tidak hilang.
-  const res = await cloudUpsert("training_sessions", insertObj, "completesession");
-  if(res && res.error){
+  const { error } = await sb.from("training_sessions").insert(insertObj);
+  if(error){
     errBox.style.display="block";
-    errBox.textContent = "Gagal menyimpan ke Training Load: " + (res.error.message || res.error);
+    errBox.textContent = "Gagal menyimpan ke Training Load: " + error.message;
     return;
   }
-  if(!res || !res.offline) await refreshTrainingLoad();
-  else cache.loads = [mapTrainingLoadRow({ ...insertObj, session_date:dateStr }), ...cache.loads]; // tampil langsung walau masih offline
+  await refreshTrainingLoad();
 
   plan.status = "completed"; plan.completedAt = Date.now();
   plan.actualDuration = duration; plan.actualRPE = rpe;
   plan.blocks.forEach(b=>b.exercises.forEach(e=>e.completed=true));
-  saveDailyPlan(mpId, plan, "completesession");
+  saveDailyPlan(mpId, plan);
 
   closeModal(); render();
-  showToast(res && res.offline ? "Offline — Changes Saved Locally" : `Sesi selesai · Session Load ${duration*rpe} AU tercatat di Training Load`);
+  showToast(`Sesi selesai · Session Load ${duration*rpe} AU tercatat di Training Load`);
 }
 
 /* ---------------- MASTER PLAN: DAFTAR ---------------- */
@@ -5216,10 +5047,7 @@ function viewMasterplanList(){
     </div>
   `;
 }
-function openMasterplan(id){
-  state.tab="masterplan"; state.mpId=id; state.mpSection="overview"; render();
-  refreshMasterplans().then(render); // Refresh Sync: Master Plan dibuka — tarik versi terbaru dari Supabase
-}
+function openMasterplan(id){ state.tab="masterplan"; state.mpId=id; state.mpSection="overview"; render(); }
 function backToMasterplanList(){ state.mpId=null; render(); }
 function setMpSection(s){ state.mpSection=s; render(); }
 
@@ -5282,7 +5110,6 @@ function modalAddMasterplan(){
     </div>
     <div id="mp-err" class="err" style="display:none;"></div>
     <button class="btn" onclick="submitAddMasterplan()">Buat Master Plan</button>
-    <div style="margin-top:8px;text-align:center;">${saveStatusBadge("addmasterplan")}</div>
   `;
 }
 function mpAutofillSport(){
@@ -5320,10 +5147,7 @@ function submitAddMasterplan(){
     startDate, durationWeeks, primaryGoal, secondaryGoal, maintenanceGoal,
     competitionName, competitionDate, model
   });
-  mp.createdBy = (cache.profile && cache.profile.id) || null;
-  const list = loadMasterplans(); list.push(mp);
-  setSaveStatus("addmasterplan", "saving");
-  saveMasterplans(list, "addmasterplan", mp.id);
+  const list = loadMasterplans(); list.push(mp); saveMasterplans(list);
   closeModal();
   openMasterplan(mp.id);
   showToast("Master Plan dibuat");
@@ -5331,9 +5155,7 @@ function submitAddMasterplan(){
 function deleteMasterplan(id){
   if(!confirm("Hapus master plan ini? Data tidak dapat dikembalikan.")) return;
   const list = loadMasterplans().filter(m=>m.id!==id);
-  cache.masterplans = list;
-  try{ localStorage.setItem(MP_KEY, JSON.stringify(list)); }catch(e){}
-  idbPut(IDB_STORE_CACHE, { key:"masterplans", value:list }).catch(()=>{});
+  saveMasterplans(list);
   deleteMasterplanFromCloud(id);
   backToMasterplanList();
   showToast("Master Plan dihapus");
@@ -5361,17 +5183,13 @@ function viewMasterplanDetail(){
       <div class="info-item"><div class="k">Kompetisi Utama</div><div class="v">${mp.competitionName || "-"}</div></div>
     </div>
 
-    ${mpDashboardWidget(mp, wk)}
-
     <div class="section-tabs">
       <button class="${state.mpSection==='overview'?'active':''}" onclick="setMpSection('overview')">Ringkasan</button>
       <button class="${state.mpSection==='daily'?'active':''}" onclick="setMpSection('daily')">Daily Planner</button>
       <button class="${state.mpSection==='macrocycle'?'active':''}" onclick="setMpSection('macrocycle')">Macrocycle</button>
       <button class="${state.mpSection==='mesocycle'?'active':''}" onclick="setMpSection('mesocycle')">Mesocycle</button>
       <button class="${state.mpSection==='load'?'active':''}" onclick="setMpSection('load')">Volume/Intensity</button>
-      <button class="${state.mpSection==='progression'?'active':''}" onclick="setMpSection('progression')">Progression</button>
       <button class="${state.mpSection==='monitoring'?'active':''}" onclick="setMpSection('monitoring')">Monitoring</button>
-      <button class="${state.mpSection==='analysis'?'active':''}" onclick="setMpSection('analysis')">Load Analysis</button>
     </div>
 
     <div id="mp-section-body">
@@ -5380,74 +5198,9 @@ function viewMasterplanDetail(){
       ${state.mpSection==='macrocycle' ? mpMacrocycleSection(mp, wk) : ""}
       ${state.mpSection==='mesocycle' ? mpMesocycleSection(mp, wk) : ""}
       ${state.mpSection==='load' ? mpLoadSection(mp, wk) : ""}
-      ${state.mpSection==='progression' ? mpProgressionSection(mp, wk) : ""}
       ${state.mpSection==='monitoring' ? mpMonitoringSection(mp, wk) : ""}
-      ${state.mpSection==='analysis' ? mpAnalysisSection(mp, wk) : ""}
     </div>
     <span class="delete-link" onclick="deleteMasterplan('${mp.id}')">🗑 Hapus Master Plan</span>
-  `;
-}
-
-/* ---------------- MASTER PLAN DASHBOARD (bagian 19) ----------------
-   Ringkasan cepat: Athlete, Phase, Week, Volume/Intensity bar, Training Load,
-   Planned vs Actual Load, RPE, Recovery (dari Readiness terakhir), ACWR, Status. */
-function mpDashboardStatus(planned, actual, zone){
-  if(zone.tag==="HIGH" || zone.tag==="VERY HIGH" || zone.tag==="EXTREME") return { label:"AT RISK", color:"var(--poor)" };
-  if(!planned || !planned.load) return { label:"ON TRACK", color:"var(--elite)" };
-  const diffPct = (actual.load - planned.load) / planned.load * 100;
-  if(diffPct > 15) return { label:"AHEAD (High Load)", color:"var(--average)" };
-  if(diffPct < -20) return { label:"BEHIND", color:"var(--average)" };
-  return { label:"ON TRACK", color:"var(--elite)" };
-}
-function mpDashboardWidget(mp, wk){
-  const phase = phaseForWeek(mp, wk);
-  const rows = loadDB(DB_KEYS.loads).filter(x=>x.athleteId===mp.athleteId).sort((a,b)=>a.date-b.date);
-  const now = Date.now();
-  const acwr = computeACWR(rows, now);
-  const zone = acwrZone(acwr.ratio);
-  const planned = weekPlannedStats(mp, wk);
-  const actual = weekActualStats(rows, mp, wk);
-  const actualRPE = weekActualRPEFromPlans(mp, wk) != null ? weekActualRPEFromPlans(mp, wk) : actual.avgRpe;
-
-  const readinessRows = loadDB(DB_KEYS.readiness).filter(r=>r.athleteId===mp.athleteId).sort((a,b)=>b.date-a.date);
-  const latestReadiness = readinessRows[0];
-  const recovery = latestReadiness ? readinessCategory(computeReadinessScore(latestReadiness)) : { label:"-", color:"var(--muted)" };
-
-  const volPct = planned.load ? Math.max(0, Math.min(150, Math.round((actual.load/planned.load)*100))) : (actual.load>0?100:0);
-  const intPct = planned.intensity ? Math.max(0, Math.min(150, Math.round(((actual.avgIntensity||0)/planned.intensity)*100))) : (actual.avgIntensity||0);
-  const status = mpDashboardStatus(planned, actual, zone);
-
-  const bar = (pct, color) => {
-    const filled = Math.round(Math.min(100,pct)/10);
-    return `<span style="font-family:monospace;letter-spacing:1px;color:${color};">${'█'.repeat(filled)}${'░'.repeat(10-filled)}</span> ${pct}%`;
-  };
-
-  return `
-    <div class="chart-card" style="border-left:4px solid var(--turquoise);">
-      <h3>Master Plan Overview</h3>
-      <div class="info-grid">
-        <div class="info-item"><div class="k">Athlete</div><div class="v">${mp.athleteName}</div></div>
-        <div class="info-item"><div class="k">Phase</div><div class="v" style="font-size:12.5px;">${phase?phase.label:'-'}</div></div>
-        <div class="info-item"><div class="k">Week</div><div class="v">Week ${wk} / ${mp.durationWeeks}</div></div>
-        <div class="info-item"><div class="k">Status</div><div class="v" style="color:${status.color};">${status.label}</div></div>
-      </div>
-      <div style="margin-top:6px;">
-        <div class="helper" style="margin-bottom:2px;">Volume (Actual/Planned)</div>
-        <div>${bar(volPct, "var(--turquoise-dark)")}</div>
-      </div>
-      <div style="margin-top:10px;">
-        <div class="helper" style="margin-bottom:2px;">Intensity (Actual/Planned)</div>
-        <div>${bar(intPct, "var(--good)")}</div>
-      </div>
-      <div class="info-grid" style="margin-top:12px;">
-        <div class="info-item"><div class="k">Training Load</div><div class="v">${Math.round(actual.load)} AU</div></div>
-        <div class="info-item"><div class="k">Planned Load</div><div class="v">${planned.load!=null?planned.load+' AU':'-'}</div></div>
-        <div class="info-item"><div class="k">Actual Load</div><div class="v">${Math.round(actual.load)} AU</div></div>
-        <div class="info-item"><div class="k">RPE</div><div class="v">${actualRPE!=null?actualRPE:'-'}</div></div>
-        <div class="info-item"><div class="k">Recovery</div><div class="v" style="color:${recovery.color};">${recovery.label}</div></div>
-        <div class="info-item"><div class="k">ACWR</div><div class="v" style="color:${zone.color};">${acwr.ratio!=null?acwr.ratio.toFixed(2):'-'}</div></div>
-      </div>
-    </div>
   `;
 }
 
@@ -5554,6 +5307,7 @@ function mpMesocycleSection(mp, wk){
             <span>Specificity: ${m.specificity}</span>
             ${m.weekEnd - m.weekStart + 1 >= 4 ? `<span>Deload: Minggu ${m.weekEnd}</span>` : ""}
           </div>
+          ${isStaff() ? `<span style="display:inline-block;margin-top:8px;font-size:11.5px;font-weight:700;color:var(--turquoise-dark);cursor:pointer;" onclick="duplicateMesocycle('${mp.id}',${i})">📋 Duplicate Mesocycle</span>` : ""}
         </div>
       `).join("")}
     </div>
@@ -5592,7 +5346,7 @@ function mpLoadSection(mp, wk){
       return `
         <div class="week-load-row ${isCurrent?'current':''}" onclick="openWeekLoadModal('${mp.id}', ${w})">
           <div class="wk-num">M${w}</div>
-          <div class="wk-phase">${phase?phase.label:'-'}${load && load.isDeload ? ' · Deload'+(load.deload && load.deload.reason ? ` (${load.deload.reason})` : '') : ''}</div>
+          <div class="wk-phase">${phase?phase.label:'-'}${load && load.isDeload ? ' · Deload':''}</div>
           <div class="wk-cell" style="background:${cellColor};color:#fff;">${cellIcon}</div>
           ${!load ? `<span class="wk-empty">Belum diisi</span>` : `<span class="helper" style="margin:0;">${volL}/${intL}</span>`}
         </div>
@@ -5642,10 +5396,9 @@ function modalAddWeeklyLog(payload){
     <div class="field"><label>Catatan (opsional)</label><textarea id="wl-note" rows="3" placeholder="Kondisi tidur, soreness, adherence, dll."></textarea></div>
     <div id="wl-err" class="err" style="display:none;"></div>
     <button class="btn" onclick="submitWeeklyLog('${payload.mpId}', ${payload.week})">Simpan & Hitung Rekomendasi</button>
-    <div style="margin-top:8px;text-align:center;">${saveStatusBadge(`weeklylog-${payload.mpId}`)}</div>
   `;
 }
-async function submitWeeklyLog(mpId, week){
+function submitWeeklyLog(mpId, week){
   const planned = Number(document.getElementById("wl-planned").value);
   const actual = Number(document.getElementById("wl-actual").value);
   const note = document.getElementById("wl-note").value.trim();
@@ -5656,403 +5409,11 @@ async function submitWeeklyLog(mpId, week){
   if(!mp){ closeModal(); return; }
   mp.weeklyLogs = mp.weeklyLogs.filter(l=>l.week!==week);
   mp.weeklyLogs.push({ week, plannedRPE:planned, actualRPE:actual, note, loggedAt: Date.now() });
-  setSaveStatus(`weeklylog-${mpId}`, "saving");
-  const ok = await saveMasterplansWithConflictCheck(list, `weeklylog-${mpId}`, mpId);
-  if(!ok) return;
+  saveMasterplans(list);
   closeModal();
   state.mpSection = "monitoring";
   render();
   showToast("Monitoring tersimpan");
-}
-
-/* ==========================================================
-   MASTER PLAN: WEEK-TO-WEEK PROGRESSION (section 5/6)
-   Coach memilih mode progresi Volume & Intensity, sistem menghitung
-   preview nilai per minggu — TIDAK terkunci, semua angka bisa diubah
-   manual sebelum diterapkan ke Volume/Intensity Mingguan.
-========================================================== */
-function mpProgressionSection(mp, wk){
-  if(!progDraft || progDraft.mpId !== mp.id){
-    const def = defaultProgressionConfig();
-    progDraft = {
-      mpId: mp.id,
-      volume: Object.assign({}, def.volume, mp.progression && mp.progression.volume || {}),
-      intensity: Object.assign({}, def.intensity, mp.progression && mp.progression.intensity || {})
-    };
-  }
-  const volSeries = computeProgressionSeries(progDraft.volume, mp, "volumeReductionPct");
-  const intSeries = computeProgressionSeries(progDraft.intensity, mp, "intensityReductionPct");
-  return `
-    <div class="chart-card">
-      <h3>Volume Progression</h3>
-      ${progressionConfigForm("volume", progDraft.volume)}
-    </div>
-    <div class="chart-card">
-      <h3>Intensity Progression</h3>
-      ${progressionConfigForm("intensity", progDraft.intensity)}
-    </div>
-    <div class="chart-card">
-      <h3>Preview Minggu 1–${mp.durationWeeks}</h3>
-      <p class="helper" style="margin-top:-4px;">Hasil perhitungan otomatis di bawah — semua angka bisa diketik ulang manual per minggu sebelum disimpan. Progression tidak terkunci.</p>
-      <div style="max-height:380px;overflow-y:auto;margin-top:8px;">
-        ${Array.from({length: mp.durationWeeks}, (_,i)=>i+1).map(w=>{
-          const wl = getWeekLoad(mp, w);
-          const isDL = wl && wl.isDeload;
-          const phase = phaseForWeek(mp, w);
-          const volVal = volSeries[w]!=null ? volSeries[w] : (wl && wl.volume.trainingLoad!=="" ? wl.volume.trainingLoad : "");
-          const intVal = intSeries[w]!=null ? intSeries[w] : (wl && wl.intensity.overallPct!=null && wl.intensity.overallPct!=="" ? wl.intensity.overallPct : "");
-          return `
-          <div class="prog-week-row" style="${w===wk?'box-shadow:0 0 0 2px var(--turquoise) inset;':''}">
-            <div class="wk-num">M${w}</div>
-            <div style="flex:1;min-width:0;">
-              <div class="helper" style="margin:0 0 4px;">${phase?phase.label:'-'}${isDL?` · ⚠ Deload${wl.deload && wl.deload.reason ? ' ('+wl.deload.reason+')' : ''}`:''}</div>
-              <div class="field-row">
-                <input type="number" step="0.1" id="prog-vol-${w}" placeholder="Volume (AU)" value="${volVal}"/>
-                <input type="number" step="0.1" id="prog-int-${w}" placeholder="Intensity (%)" value="${intVal}"/>
-              </div>
-            </div>
-          </div>`;
-        }).join("")}
-      </div>
-    </div>
-    ${isStaff() ? `<button class="btn" onclick="submitProgression('${mp.id}')">Simpan & Terapkan ke Volume/Intensity Mingguan</button>` : ""}
-    <div style="margin-top:8px;text-align:center;">${saveStatusBadge(`progression-${mp.id}`)}</div>
-    <p class="helper" style="margin-top:8px;font-style:italic;">Deload week, alasan, dan persentase pengurangan diatur lewat tombol tiap minggu di tab "Volume/Intensity" (centang "Deload / Recovery Week").</p>
-  `;
-}
-function progressionConfigForm(kind, cfg){
-  const unit = kind==="volume" ? "AU" : "%";
-  return `
-    <div class="field"><label>Volume/Intensity Progression Mode</label>
-      <select onchange="progSetMode('${kind}', this.value)">
-        ${PROGRESSION_MODES.map(([v,l])=>`<option value="${v}" ${cfg.mode===v?'selected':''}>${l}</option>`).join("")}
-      </select>
-    </div>
-    ${cfg.mode==="manual" ? `<p class="helper">Mode Manual: isi angka langsung di tabel preview minggu di bawah — tidak ada perhitungan otomatis.</p>` : `
-    <div class="field-row3">
-      <div class="field"><label>Start Value (${unit})</label><input type="number" value="${cfg.start}" onchange="progSetParam('${kind}','start',this.value)"/></div>
-      ${cfg.mode==="percentage" ? `<div class="field"><label>Kenaikan / minggu (%)</label><input type="number" value="${cfg.pct}" onchange="progSetParam('${kind}','pct',this.value)"/></div>` : ""}
-      ${cfg.mode==="linear" ? `<div class="field"><label>Kenaikan / minggu (${unit})</label><input type="number" value="${cfg.increment}" onchange="progSetParam('${kind}','increment',this.value)"/></div>` : ""}
-      ${cfg.mode==="wave" ? `
-        <div class="field"><label>Panjang Wave (minggu)</label><input type="number" min="2" value="${cfg.waveWeeks}" onchange="progSetParam('${kind}','waveWeeks',this.value)"/></div>
-        <div class="field"><label>Ramp / minggu dlm wave (%)</label><input type="number" value="${cfg.pct}" onchange="progSetParam('${kind}','pct',this.value)"/></div>
-      ` : ""}
-      ${cfg.mode==="step" ? `
-        <div class="field"><label>Tahan tiap (minggu)</label><input type="number" min="1" value="${cfg.stepWeeks}" onchange="progSetParam('${kind}','stepWeeks',this.value)"/></div>
-        <div class="field"><label>Kenaikan / step (${unit})</label><input type="number" value="${cfg.stepIncrement}" onchange="progSetParam('${kind}','stepIncrement',this.value)"/></div>
-      ` : ""}
-    </div>
-    `}
-  `;
-}
-function progSetMode(kind, mode){ progDraft[kind].mode = mode; render(); }
-function progSetParam(kind, field, val){ progDraft[kind][field] = val; }
-async function submitProgression(mpId){
-  const list = loadMasterplans();
-  const mp = list.find(m=>m.id===mpId); if(!mp) return;
-  mp.progression = { volume: Object.assign({}, progDraft.volume), intensity: Object.assign({}, progDraft.intensity) };
-  mp.weeklyLoads = mp.weeklyLoads || {};
-  let applied = 0;
-  for(let w=1; w<=mp.durationWeeks; w++){
-    const volEl = document.getElementById(`prog-vol-${w}`);
-    const intEl = document.getElementById(`prog-int-${w}`);
-    const volVal = volEl ? volEl.value : "";
-    const intVal = intEl ? intEl.value : "";
-    if(volVal==="" && intVal==="") continue;
-    const existing = mp.weeklyLoads[w] || emptyWeekLoad(w);
-    if(volVal!=="") existing.volume.trainingLoad = volVal;
-    if(intVal!==""){ existing.intensity = existing.intensity || {}; existing.intensity.overallPct = intVal; }
-    existing.updatedAt = Date.now();
-    mp.weeklyLoads[w] = existing;
-    applied++;
-  }
-  setSaveStatus(`progression-${mpId}`, "saving");
-  const ok = await saveMasterplansWithConflictCheck(list, `progression-${mpId}`, mpId);
-  if(!ok) return;
-  showToast(applied ? `Progression diterapkan ke ${applied} minggu` : "Tidak ada nilai untuk diterapkan");
-  render();
-}
-
-/* ==========================================================
-   MASTER PLAN: TRAINING SESSION GENERATOR (section 7)
-   Membuat kerangka rencana sesi 7 hari sekaligus (judul per hari +
-   penanda rest day) berdasarkan template mingguan yang bisa diedit
-   coach, lalu detail exercise tetap dilengkapi lewat Daily Planner.
-========================================================== */
-const WEEK_TEMPLATE_PRESET = [
-  { day:"Senin",  title:"Strength + Muay Thai",              rest:false },
-  { day:"Selasa", title:"Aerobic Conditioning + Technical",   rest:false },
-  { day:"Rabu",   title:"Recovery / Mobility",                rest:false },
-  { day:"Kamis",  title:"Strength + SAQ",                     rest:false },
-  { day:"Jumat",  title:"Muay Thai + Heavy Bag",               rest:false },
-  { day:"Sabtu",  title:"Sparring",                            rest:false },
-  { day:"Minggu", title:"Rest",                                rest:true }
-];
-function openWeekTemplateModal(mpId){
-  const monday = state.dpWeekStart || mondayOf(todayISO());
-  wtDraft = { mpId, monday, days: WEEK_TEMPLATE_PRESET.map((p,i)=>Object.assign({}, p, { date: addDaysISO(monday, i) })) };
-  openModal("weekTemplate", { mpId });
-}
-function modalWeekTemplate(payload){
-  if(!wtDraft || wtDraft.mpId !== payload.mpId){
-    const monday = state.dpWeekStart || mondayOf(todayISO());
-    wtDraft = { mpId: payload.mpId, monday, days: WEEK_TEMPLATE_PRESET.map((p,i)=>Object.assign({}, p, { date: addDaysISO(monday, i) })) };
-  }
-  return `
-    <div class="modal-head"><h3>Generate Sesi Mingguan</h3><button class="close-x" onclick="closeModal()">✕</button></div>
-    <p class="helper" style="margin-top:-6px;">Minggu ${dpFmtDate(wtDraft.days[0].date)} – ${dpFmtDate(wtDraft.days[6].date)}. Ini membuat judul sesi & status Rest Day untuk 7 hari sekaligus; Sets/Reps/Load/RPE/dll tetap dilengkapi per exercise lewat Daily Planner seperti biasa.</p>
-    ${wtDraft.days.map((d,i)=>`
-      <div class="field-row" style="align-items:end;">
-        <div class="field"><label>${d.day} (${d.date.slice(5)})</label>
-          <input type="text" value="${d.title}" oninput="wtUpdate(${i},'title',this.value)" ${d.rest?'disabled':''} placeholder="cth. Strength + Muay Thai"/>
-        </div>
-        <div class="field" style="flex-direction:row;align-items:center;gap:6px;">
-          <input type="checkbox" id="wt-rest-${i}" ${d.rest?'checked':''} onchange="wtToggleRest(${i})"/>
-          <label style="margin:0;" for="wt-rest-${i}">Rest Day</label>
-        </div>
-      </div>
-    `).join("")}
-    <div id="wt-err" class="err" style="display:none;"></div>
-    <button class="btn" onclick="submitWeekTemplate()">Generate 7 Rencana Sesi</button>
-    <div style="margin-top:8px;text-align:center;">${saveStatusBadge(`weektemplate-${wtDraft.mpId}`)}</div>
-  `;
-}
-function wtUpdate(i, field, val){ wtDraft.days[i][field] = val; }
-function wtToggleRest(i){ wtDraft.days[i].rest = !wtDraft.days[i].rest; render(); }
-function submitWeekTemplate(){
-  const mpId = wtDraft.mpId;
-  const list = loadMasterplans();
-  const mp = list.find(m=>m.id===mpId); if(!mp) return;
-  mp.dailyPlans = mp.dailyPlans || {};
-  let skipped = 0;
-  wtDraft.days.forEach(d=>{
-    const existing = mp.dailyPlans[d.date];
-    if(existing && existing.status === "completed"){ skipped++; return; } // jangan timpa sesi yang sudah selesai
-    if(d.rest){
-      mp.dailyPlans[d.date] = Object.assign(emptyDailyPlan(d.date), { isRestDay:true });
-    } else {
-      const plan = emptyDailyPlan(d.date);
-      plan.title = (d.title || "").trim() || "Sesi Latihan";
-      mp.dailyPlans[d.date] = plan;
-    }
-  });
-  setSaveStatus(`weektemplate-${mpId}`, "saving");
-  saveMasterplans(list, `weektemplate-${mpId}`, mpId);
-  wtDraft = null;
-  closeModal();
-  state.mpSection = "daily";
-  render();
-  showToast(skipped ? `Template dibuat (${skipped} sesi yang sudah selesai tidak ditimpa)` : "Template mingguan dibuat — lengkapi detail tiap sesi di Daily Planner");
-}
-
-/* ==========================================================
-   MASTER PLAN: AUTOMATIC TRAINING LOAD CALCULATION +
-   PLANNED VS ACTUAL + ACWR INTEGRATION (section 8/9/10)
-========================================================== */
-function weekDateMsRange(mp, wk){
-  if(!mp.startDate) return [0,-1];
-  const start = new Date(mp.startDate+"T00:00:00").getTime() + (wk-1)*7*86400000;
-  return [start, start + 7*86400000 - 1];
-}
-// Planned data — bersumber dari Volume/Intensity Mingguan (Week-to-Week Progression) & Daily Planner
-function weekPlannedStats(mp, wk){
-  const wl = getWeekLoad(mp, wk);
-  return {
-    load: wl && wl.volume.trainingLoad!=="" ? Number(wl.volume.trainingLoad)||0 : null,
-    volume: wl && wl.volume.strengthVolumeLoad!=="" ? Number(wl.volume.strengthVolumeLoad)||0 : null,
-    intensity: wl && wl.intensity.overallPct!=null && wl.intensity.overallPct!=="" ? Number(wl.intensity.overallPct) : null,
-    rpe: weekPlannedRPE(mp, wk)
-  };
-}
-function weekPlannedRPE(mp, wk){
-  if(!mp.dailyPlans) return null;
-  const [from,to] = weekDateMsRange(mp, wk);
-  const vals = [];
-  Object.values(mp.dailyPlans).forEach(p=>{
-    if(p.isRestDay) return;
-    const t = new Date(p.date+"T00:00:00").getTime();
-    if(t<from || t>to) return;
-    p.blocks.forEach(b=>b.exercises.forEach(e=>{ const r = Number(e.rpeTarget); if(r>0) vals.push(r); }));
-  });
-  return vals.length ? Math.round((vals.reduce((a,b)=>a+b,0)/vals.length)*10)/10 : null;
-}
-function weekActualRPEFromPlans(mp, wk){
-  if(!mp.dailyPlans) return null;
-  const [from,to] = weekDateMsRange(mp, wk);
-  const vals = [];
-  Object.values(mp.dailyPlans).forEach(p=>{
-    const t = new Date(p.date+"T00:00:00").getTime();
-    if(t<from || t>to) return;
-    if(p.status==="completed" && p.actualRPE!=null) vals.push(Number(p.actualRPE));
-  });
-  return vals.length ? Math.round((vals.reduce((a,b)=>a+b,0)/vals.length)*10)/10 : null;
-}
-// Actual data — bersumber dari Training Load (training_sessions) yang sudah tercatat, termasuk hasil "Tandai Sesi Selesai"
-// Session Load = Duration × Session RPE, Volume Load = Sets × Reps × Load (sudah dihitung di mapTrainingLoadRow)
-function weekActualStats(rows, mp, wk){
-  const [from,to] = weekDateMsRange(mp, wk);
-  const wkRows = rows.filter(r=>r.date>=from && r.date<=to);
-  const load = wkRows.reduce((s,r)=>s+(r.load||0),0);
-  const volume = wkRows.reduce((s,r)=>s+(r.volumeLoad||0),0);
-  const rpeVals = wkRows.map(r=>r.rpe).filter(v=>v>0);
-  const avgRpe = rpeVals.length ? Math.round((rpeVals.reduce((a,b)=>a+b,0)/rpeVals.length)*10)/10 : null;
-  const pctVals = [];
-  wkRows.forEach(r=>(r.strengthData||[]).forEach(x=>{ if(x.pct1rm!=null) pctVals.push(x.pct1rm); }));
-  const avgIntensity = pctVals.length ? Math.round(pctVals.reduce((a,b)=>a+b,0)/pctVals.length) : (avgRpe!=null ? Math.round(avgRpe*10) : null);
-  return { load, volume, avgRpe, avgIntensity, sessions: wkRows.length };
-}
-
-function setMpAnalysisGrain(g){ state.mpAnalysisGrain = g; render(); }
-
-function mpAnalysisSection(mp, wk){
-  const rows = loadDB(DB_KEYS.loads).filter(x=>x.athleteId===mp.athleteId).sort((a,b)=>a.date-b.date);
-  const now = Date.now();
-  const acwr = computeACWR(rows, now);
-  const zone = acwrZone(acwr.ratio);
-  const trend = loadTrend(rows, now);
-
-  const planned = weekPlannedStats(mp, wk);
-  const actual = weekActualStats(rows, mp, wk);
-  const actualRPE = weekActualRPEFromPlans(mp, wk) != null ? weekActualRPEFromPlans(mp, wk) : actual.avgRpe;
-  const loadWarn = planned.load && actual.load > planned.load * 1.15;
-
-  if(!state.mpAnalysisGrain) state.mpAnalysisGrain = "week";
-
-  return `
-    <div class="stat-grid">
-      <div class="stat-card"><div class="label">ACWR</div><div class="value" style="color:${zone.color}">${acwr.ratio!=null?acwr.ratio.toFixed(2):'-'}</div><div class="helper" style="color:${zone.color};font-weight:700;">${zone.tag}</div></div>
-      <div class="stat-card"><div class="label">Acute Load (7 hari)</div><div class="value">${Math.round(acwr.acuteLoad)}</div></div>
-      <div class="stat-card"><div class="label">Chronic Load (avg/minggu)</div><div class="value">${Math.round(acwr.chronicWeeklyAvg)}</div></div>
-      <div class="stat-card"><div class="label">Load Trend</div><div class="value" style="font-size:15px;">${trend.status}</div></div>
-    </div>
-    <p class="helper" style="margin:-8px 0 16px;font-style:italic;">ACWR adalah metric monitoring beban latihan, bukan alat diagnosis cedera. Interpretasikan bersama riwayat latihan, recovery, dan penilaian pelatih.</p>
-
-    <div class="chart-card">
-      <h3>Planned vs Actual — Minggu ${wk}</h3>
-      <div class="info-grid">
-        <div class="info-item"><div class="k">Planned Load</div><div class="v">${planned.load!=null?planned.load+' AU':'-'}</div></div>
-        <div class="info-item"><div class="k">Actual Load</div><div class="v">${Math.round(actual.load)} AU</div></div>
-        <div class="info-item"><div class="k">Planned Volume</div><div class="v">${planned.volume!=null?planned.volume+' kg':'-'}</div></div>
-        <div class="info-item"><div class="k">Actual Volume</div><div class="v">${Math.round(actual.volume)} kg</div></div>
-        <div class="info-item"><div class="k">Planned Intensity</div><div class="v">${planned.intensity!=null?planned.intensity+'%':'-'}</div></div>
-        <div class="info-item"><div class="k">Actual Intensity</div><div class="v">${actual.avgIntensity!=null?actual.avgIntensity+'%':'-'}</div></div>
-        <div class="info-item"><div class="k">Planned RPE</div><div class="v">${planned.rpe!=null?planned.rpe:'-'}</div></div>
-        <div class="info-item"><div class="k">Actual RPE</div><div class="v">${actualRPE!=null?actualRPE:'-'}</div></div>
-      </div>
-      ${planned.load ? `<p class="helper" style="margin-top:8px;">Difference Load: <b style="color:${actual.load>planned.load?'var(--poor)':'var(--elite)'}">${actual.load>=planned.load?'+':''}${Math.round((actual.load-planned.load)/planned.load*100)}%</b></p>` : ""}
-      ${loadWarn ? `<div class="warn-box sev-high"><span class="wicon">🔴</span><span>Actual workload is above planned workload. Review volume, intensity and recovery.</span></div>` : ""}
-    </div>
-
-    <div class="section-tabs">
-      <button class="${state.mpAnalysisGrain==='session'?'active':''}" onclick="setMpAnalysisGrain('session')">Session</button>
-      <button class="${state.mpAnalysisGrain==='week'?'active':''}" onclick="setMpAnalysisGrain('week')">Week</button>
-      <button class="${state.mpAnalysisGrain==='phase'?'active':''}" onclick="setMpAnalysisGrain('phase')">Phase</button>
-      <button class="${state.mpAnalysisGrain==='plan'?'active':''}" onclick="setMpAnalysisGrain('plan')">Master Plan</button>
-    </div>
-
-    <div class="chart-card"><h3>Training Load — Planned vs Actual</h3>${rows.length===0?`<div class="chart-empty">Belum ada data training load aktual.</div>`:`<canvas id="chart-pva-load" height="180"></canvas>`}</div>
-    <div class="chart-card"><h3>Volume — Planned vs Actual</h3>${rows.length===0?`<div class="chart-empty">Belum ada data training load aktual.</div>`:`<canvas id="chart-pva-volume" height="180"></canvas>`}</div>
-    <div class="chart-card"><h3>Intensity — Planned vs Actual</h3>${rows.length===0?`<div class="chart-empty">Belum ada data training load aktual.</div>`:`<canvas id="chart-pva-intensity" height="180"></canvas>`}</div>
-    <div class="chart-card"><h3>RPE — Planned vs Actual</h3>${rows.length===0?`<div class="chart-empty">Belum ada data training load aktual.</div>`:`<canvas id="chart-pva-rpe" height="180"></canvas>`}</div>
-  `;
-}
-
-// Menyusun {labels, planned[], actual[]} untuk satu metric pada satu level agregasi (Session/Week/Phase/Master Plan)
-function buildPvaSeries(mp, rows, grain, metric){
-  const totalWeeks = Number(mp.durationWeeks)||0;
-  const weeks = Array.from({length: totalWeeks}, (_,i)=>i+1);
-  const perWeek = weeks.map(w=>{
-    const p = weekPlannedStats(mp, w);
-    const a = weekActualStats(rows, mp, w);
-    let planned, actual;
-    if(metric==="load"){ planned=p.load; actual=a.load; }
-    else if(metric==="volume"){ planned=p.volume; actual=a.volume; }
-    else if(metric==="intensity"){ planned=p.intensity; actual=a.avgIntensity; }
-    else { planned=p.rpe; actual = weekActualRPEFromPlans(mp,w) != null ? weekActualRPEFromPlans(mp,w) : a.avgRpe; }
-    return { week:w, planned, actual };
-  });
-
-  if(grain==="week"){
-    return { labels: weeks.map(w=>"M"+w), planned: perWeek.map(x=>x.planned||0), actual: perWeek.map(x=>x.actual||0) };
-  }
-  if(grain==="phase"){
-    const phases = [...mp.phases].sort((a,b)=>a.weekStart-b.weekStart);
-    const labels = [], planned = [], actual = [];
-    const isAvgMetric = metric==="intensity" || metric==="rpe";
-    phases.forEach(ph=>{
-      const ws = perWeek.filter(x=>x.week>=ph.weekStart && x.week<=ph.weekEnd);
-      labels.push(ph.label);
-      if(isAvgMetric){
-        const pv = ws.map(x=>x.planned).filter(v=>v!=null);
-        const av = ws.map(x=>x.actual).filter(v=>v!=null);
-        planned.push(pv.length ? Math.round(pv.reduce((a,b)=>a+b,0)/pv.length) : 0);
-        actual.push(av.length ? Math.round(av.reduce((a,b)=>a+b,0)/av.length) : 0);
-      } else {
-        planned.push(Math.round(ws.reduce((s,x)=>s+(x.planned||0),0)));
-        actual.push(Math.round(ws.reduce((s,x)=>s+(x.actual||0),0)));
-      }
-    });
-    return { labels, planned, actual };
-  }
-  if(grain==="plan"){
-    const isAvgMetric = metric==="intensity" || metric==="rpe";
-    if(isAvgMetric){
-      const pv = perWeek.map(x=>x.planned).filter(v=>v!=null);
-      const av = perWeek.map(x=>x.actual).filter(v=>v!=null);
-      return { labels:[mp.name || mp.athleteName || "Master Plan"],
-        planned:[pv.length ? Math.round(pv.reduce((a,b)=>a+b,0)/pv.length) : 0],
-        actual:[av.length ? Math.round(av.reduce((a,b)=>a+b,0)/av.length) : 0] };
-    }
-    return { labels:[mp.name || mp.athleteName || "Master Plan"],
-      planned:[Math.round(perWeek.reduce((s,x)=>s+(x.planned||0),0))],
-      actual:[Math.round(perWeek.reduce((s,x)=>s+(x.actual||0),0))] };
-  }
-  // grain === "session": bandingkan sesi aktual terbaru dengan rencana sesi harian di tanggal yang sama (jika ada)
-  const sessRows = rows.slice(-14);
-  const labels = sessRows.map(r=>new Date(r.date).toLocaleDateString("id-ID",{day:"2-digit",month:"short"}));
-  const planned = sessRows.map(r=>{
-    const dateStr = new Date(r.date).toISOString().slice(0,10);
-    const plan = mp.dailyPlans && mp.dailyPlans[dateStr];
-    if(!plan || plan.isRestDay) return 0;
-    const rpes = plan.blocks.flatMap(b=>b.exercises).map(e=>Number(e.rpeTarget)).filter(v=>v>0);
-    const estRpe = rpes.length ? rpes.reduce((a,b)=>a+b,0)/rpes.length : 0;
-    if(metric==="load") return Math.round((plan.actualDuration || 0) * estRpe) || 0;
-    if(metric==="rpe") return rpes.length ? Math.round(estRpe*10)/10 : 0;
-    return 0; // volume/intensity planned tidak dipecah per-sesi, hanya per-minggu
-  });
-  const actual = sessRows.map(r=>{
-    if(metric==="load") return Math.round(r.load||0);
-    if(metric==="volume") return Math.round(r.volumeLoad||0);
-    if(metric==="rpe") return r.rpe||0;
-    const pctVals = (r.strengthData||[]).map(x=>x.pct1rm).filter(v=>v!=null);
-    return pctVals.length ? Math.round(pctVals.reduce((a,b)=>a+b,0)/pctVals.length) : Math.round((r.rpe||0)*10);
-  });
-  return { labels, planned, actual };
-}
-
-function drawPvaCharts(){
-  const mp = loadMasterplans().find(m=>m.id===state.mpId); if(!mp) return;
-  const rows = loadDB(DB_KEYS.loads).filter(x=>x.athleteId===mp.athleteId).sort((a,b)=>a.date-b.date);
-  if(rows.length===0) return;
-  const grain = state.mpAnalysisGrain || "week";
-  [
-    ["load","chart-pva-load"],
-    ["volume","chart-pva-volume"],
-    ["intensity","chart-pva-intensity"],
-    ["rpe","chart-pva-rpe"]
-  ].forEach(([metric, canvasId])=>{
-    destroyChart(canvasId);
-    const canvas = document.getElementById(canvasId); if(!canvas) return;
-    const { labels, planned, actual } = buildPvaSeries(mp, rows, grain, metric);
-    chartInstances[canvasId] = new Chart(canvas, {
-      type:"bar",
-      data:{ labels, datasets:[
-        { label:"Planned", data:planned, backgroundColor:"#9FD9D5" },
-        { label:"Actual", data:actual, backgroundColor:"#20B2AA" }
-      ]},
-      options:{ responsive:true, plugins:{legend:{display:true, labels:{font:{size:10}}}}, scales:{ y:{ticks:{font:{size:10}}}, x:{ticks:{font:{size:10}}} } }
-    });
-  });
 }
 
 /* ---------------- MODAL WRAPPER ---------------- */
@@ -6079,14 +5440,13 @@ function renderModal(){
   if(state.modal.name==="addScoringProfile") modal.innerHTML = modalAddScoringProfile(state.modal.payload);
   if(state.modal.name==="importScoringStandards") modal.innerHTML = modalImportScoringStandards();
   if(state.modal.name==="editDailyPlan") modal.innerHTML = modalEditDailyPlan(state.modal.payload);
+  if(state.modal.name==="duplicateProgram") modal.innerHTML = modalDuplicateProgram(state.modal.payload);
   if(state.modal.name==="completeSession") modal.innerHTML = modalCompleteSession(state.modal.payload);
   if(state.modal.name==="backup") modal.innerHTML = modalBackup();
   if(state.modal.name==="addMasterplan") modal.innerHTML = modalAddMasterplan();
   if(state.modal.name==="addWeeklyLog") modal.innerHTML = modalAddWeeklyLog(state.modal.payload);
   if(state.modal.name==="editPhase") modal.innerHTML = modalEditPhase(state.modal.payload);
   if(state.modal.name==="weekLoad") modal.innerHTML = modalWeekLoad(state.modal.payload);
-  if(state.modal.name==="weekTemplate") modal.innerHTML = modalWeekTemplate(state.modal.payload);
-  if(state.modal.name==="mpConflict") modal.innerHTML = modalMpConflict(state.modal.payload);
   overlay.appendChild(modal);
   document.getElementById("app").appendChild(overlay);
 }
@@ -6149,7 +5509,6 @@ async function handleAuthSubmit(){
 }
 
 async function handleLogout(){
-  if(_realtimeChannel){ try{ sb.removeChannel(_realtimeChannel); }catch(e){} _realtimeChannel = null; }
   await sb.auth.signOut();
   cache = { athletes:[], tests:[], assessments:[], injuries:[], testCategories:[], bodyParts:[], profile:null, readiness:[], loads:[], goals:[], batteries:[], batterySessions:[], rehabLogs:[], asymmetry:[], notes:[], competitions:[], competitionResults:[], masterplans:[], scoringProfiles:[], scoringRanges:[] };
   renderAuthScreen();
@@ -6162,26 +5521,6 @@ async function bootAppAfterLogin(){
   cache.profile = profile;
   await refreshAll();
   render();
-  flushSyncQueue(true); // Refresh Sync: proses ulang perubahan offline yang sempat tertunda saat login
-  startRealtimeSync();  // bagian 15: Supabase Realtime untuk Master Plan & Training Session
-}
-
-/* ---------------- SUPABASE REALTIME (bagian 15) ----------------
-   Kalau tersedia, dengarkan perubahan langsung dari Supabase (device lain / coach lain)
-   supaya Master Plan & Training Load ter-update otomatis tanpa perlu refresh manual. */
-let _realtimeChannel = null;
-function startRealtimeSync(){
-  if(!sb || _realtimeChannel) return;
-  try{
-    _realtimeChannel = sb.channel("fwj-cross-device-sync")
-      .on("postgres_changes", { event:"*", schema:"public", table:"training_masterplans" }, ()=>{
-        refreshMasterplans().then(render);
-      })
-      .on("postgres_changes", { event:"*", schema:"public", table:"training_sessions" }, ()=>{
-        refreshTrainingLoad().then(render);
-      })
-      .subscribe();
-  }catch(e){ console.warn("Realtime tidak aktif (opsional):", e); }
 }
 
 async function initApp(){
