@@ -111,6 +111,14 @@
   .close-x{background:none;border:none;font-size:20px;color:var(--muted);cursor:pointer;padding:4px;}
 
   .badge{display:inline-block;padding:3px 9px;border-radius:20px;font-size:11px;font-weight:700;color:white;}
+  .report-table{width:100%;border-collapse:collapse;font-size:11.5px;min-width:480px;}
+  .report-table th{text-align:left;color:var(--muted);font-weight:700;text-transform:uppercase;font-size:9.5px;padding:6px 8px;border-bottom:2px solid var(--border);white-space:nowrap;}
+  .report-table td{padding:7px 8px;border-bottom:1px solid var(--border);white-space:nowrap;}
+  @media print{
+    .top, .bottom, .fab, .backup-btn, .no-print{ display:none !important; }
+    body{ background:white; }
+    .report-page{ box-shadow:none !important; padding:0 !important; }
+  }
   .result-box{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:16px;text-align:center;margin:14px 0;}
   .result-box .score{font-size:30px;font-weight:800;margin:6px 0;}
   .result-box .sub{font-size:12px;color:var(--muted);}
@@ -365,7 +373,16 @@ const BUCKET = "athlete-assets";
    Supabase, bukan dari localStorage. */
 const DB_KEYS = { athletes:"athletes", tests:"tests", assessments:"assessments", injuries:"injuries", readiness:"readiness", loads:"loads", goals:"goals", batteries:"batteries", batterySessions:"batterySessions", rehabLogs:"rehabLogs", asymmetry:"asymmetry", notes:"notes", competitions:"competitions", competitionResults:"competitionResults", masterplans:"masterplans", scoringProfiles:"scoringProfiles", scoringRanges:"scoringRanges" };
 
-let cache = { athletes:[], tests:[], assessments:[], injuries:[], testCategories:[], bodyParts:[], profile:null, readiness:[], loads:[], goals:[], batteries:[], batterySessions:[], rehabLogs:[], asymmetry:[], notes:[], competitions:[], competitionResults:[], masterplans:[], scoringProfiles:[], scoringRanges:[] };
+let cache = { athletes:[], tests:[], assessments:[], injuries:[], testCategories:[], bodyParts:[], profile:null, readiness:[], loads:[], goals:[], batteries:[], batterySessions:[], rehabLogs:[], asymmetry:[], notes:[], competitions:[], competitionResults:[], masterplans:[], scoringProfiles:[], scoringRanges:[],
+  perfScoreSettings: { method:"equal", weights:{ strength:25, power:20, speed:20, agility:15, endurance:15, "flexibility-mobility":5 } },
+  perfClassBands: [
+    { id:null, label:"Elite", minScore:90, color:"#1D9E75" },
+    { id:null, label:"Advanced", minScore:80, color:"#159A94" },
+    { id:null, label:"Intermediate", minScore:70, color:"#378ADD" },
+    { id:null, label:"Developing", minScore:60, color:"#EF9F27" },
+    { id:null, label:"Beginner", minScore:0, color:"#E24B4A" }
+  ]
+};
 
 function loadDB(key){ return cache[key] || []; }
 function uid(){ return Date.now().toString(36) + Math.random().toString(36).slice(2,7); }
@@ -399,7 +416,7 @@ function mapAthleteRow(a){
   return {
     id: a.id, code: a.athlete_code, name: a.full_name, photo: a.profile_photo_url,
     sport: a.sport || "-", position: a.position || "-", gender: a.gender || "L",
-    age, height: a.height_cm, weight: a.weight_kg,
+    age, height: a.height_cm, weight: a.weight_kg, level: a.level || null,
     status: STATUS_DB_TO_UI[a.status] || "Aktif",
     userId: a.user_id || null
   };
@@ -492,7 +509,7 @@ function mapBatterySessionRow(s){
 function mapScoringProfileRow(p){
   return {
     id: p.id, testId: p.test_id, gender: p.gender, ageGroup: p.age_group || null,
-    sport: p.sport || null, position: p.position || null,
+    sport: p.sport || null, position: p.position || null, level: p.athlete_level || null,
     direction: p.scoring_direction === "lower_better" ? "lower" : "higher",
     unit: p.unit || "", isActive: p.is_active
   };
@@ -665,6 +682,24 @@ async function refreshMasterplans(){
   try{ localStorage.setItem(MP_KEY, JSON.stringify(cache.masterplans)); }catch(e){}
 }
 
+async function refreshPerfScoreSettings(){
+  if(!sb) return;
+  const { data, error } = await sb.from("performance_score_settings").select("*").eq("id",1).maybeSingle();
+  if(error || !data){
+    // Tabel mungkin belum ada (migration supabase.sql belum dijalankan) —
+    // jangan blokir load, pakai default Equal Weight di memori.
+    return;
+  }
+  cache.perfScoreSettings = { method: data.method || "equal", weights: data.weights || cache.perfScoreSettings.weights };
+}
+
+async function refreshPerfClassBands(){
+  if(!sb) return;
+  const { data, error } = await sb.from("performance_classification_bands").select("*").order("min_score",{ascending:false});
+  if(error || !data || !data.length) return; // tabel belum ada -> pakai default spec di memori
+  cache.perfClassBands = data.map(b=>({ id:b.id, label:b.label, minScore:Number(b.min_score), color:b.color||"#5B6664" }));
+}
+
 async function refreshAll(){
   await refreshReferenceData();
   await refreshTests();
@@ -684,6 +719,8 @@ async function refreshAll(){
   await refreshCompetitions();
   await refreshCompetitionResults();
   await refreshMasterplans();
+  await refreshPerfScoreSettings();
+  await refreshPerfClassBands();
 }
 
 /* ---------------- upload foto ke Supabase Storage ---------------- */
@@ -753,11 +790,12 @@ function findScoringProfile(testId, athlete){
     p.testId === testId && p.isActive && (p.gender === gender || p.gender === "Any")
   );
   if(candidates.length === 0) return null;
-  const specificity = p => (p.gender===gender?2:0) + (p.ageGroup?1:0) + (p.sport?1:0) + (p.position?1:0);
+  const specificity = p => (p.gender===gender?2:0) + (p.ageGroup?1:0) + (p.sport?1:0) + (p.position?1:0) + (p.level?1:0);
   const matches = candidates.filter(p =>
     (!p.ageGroup || p.ageGroup === ageGroup) &&
     (!p.sport || p.sport === athlete.sport) &&
-    (!p.position || p.position === athlete.position)
+    (!p.position || p.position === athlete.position) &&
+    (!p.level || p.level === athlete.level)
   );
   if(matches.length === 0) return null;
   matches.sort((a,b)=>specificity(b)-specificity(a));
@@ -783,6 +821,635 @@ function isPersonalBest(rows, idx, direction){
     ? others.every(o=>row.rawScore <= o.rawScore)
     : others.every(o=>row.rawScore >= o.rawScore);
   return better;
+}
+
+/* ==========================================================
+   PERFORMANCE SCORE SYSTEM
+   Menghitung skor performa keseluruhan atlet dari seluruh hasil tes
+   (Normalized Score 0-100) yang sudah ada lewat scoring engine di atas
+   (test_scoring_profiles + test_scoring_ranges). Modul ini HANYA
+   meng-agregasi — tidak mengubah cara skor per-tes dihitung.
+========================================================== */
+const PERF_SCORE_CATEGORIES = [
+  { slug:"strength", label:"Strength", icon:"🏋️" },
+  { slug:"power", label:"Power", icon:"💥" },
+  { slug:"speed", label:"Speed", icon:"🏃" },
+  { slug:"agility", label:"Agility", icon:"🔀" },
+  { slug:"endurance", label:"Endurance", icon:"🫁" },
+  { slug:"flexibility-mobility", label:"Flexibility & Mobility", icon:"🤸" }
+];
+function testCategorySlug(testId){
+  const t = cache.tests.find(x=>x.id===testId); if(!t) return null;
+  const cat = cache.testCategories.find(c=>c.id===t.categoryId);
+  return cat ? cat.slug : null;
+}
+// Hasil valid terbaru per test item untuk 1 atlet (satu baris per testId,
+// yang paling baru tanggalnya, dan hanya yang punya computed score).
+function perfLatestByTest(athleteId){
+  const rows = loadDB(DB_KEYS.assessments).filter(x=>x.athleteId===athleteId && x.score!=null);
+  const byTest = {};
+  rows.forEach(r=>{
+    const cur = byTest[r.testId];
+    if(!cur || r.date > cur.date) byTest[r.testId] = r;
+  });
+  return byTest;
+}
+// Breakdown per 6 kategori Performance Score System: skor rata-rata
+// kategori (null kalau belum ada tes valid), jumlah tes selesai/total,
+// dan daftar hasil tes individual untuk ditampilkan.
+function perfCategoryBreakdown(athleteId){
+  const latest = perfLatestByTest(athleteId);
+  return PERF_SCORE_CATEGORIES.map(cat=>{
+    const catTests = cache.tests.filter(t=>testCategorySlug(t.id)===cat.slug);
+    const results = catTests
+      .map(t=>({ test:t, result: latest[t.id] || null }))
+      .filter(x=>x.result);
+    const score = results.length ? results.reduce((s,x)=>s+x.result.score,0) / results.length : null;
+    return { ...cat, totalTests: catTests.length, doneCount: results.length, score, results };
+  });
+}
+// Performance Classification (spec #4) — band & threshold diambil dari
+// cache.perfClassBands (tabel performance_classification_bands), bukan
+// hardcode, supaya Admin/Pelatih bisa mengubahnya sesuai kebutuhan program.
+function perfClassify(score){
+  if(score==null) return { label:"Belum ada data", color:"#5B6664" };
+  const bands = [...cache.perfClassBands].sort((a,b)=>b.minScore-a.minScore);
+  const band = bands.find(b=>score>=b.minScore) || bands[bands.length-1];
+  return band ? { label:band.label, color:band.color } : { label:"-", color:"#5B6664" };
+}
+// Overall score: Equal Weight (rata-rata skor antar kategori yang sudah
+// punya data) atau Weighted Score (bobot per kategori, dinormalisasi
+// ulang ke kategori yang punya data saja — sesuai spesifikasi).
+function perfOverallScore(athleteId){
+  const breakdown = perfCategoryBreakdown(athleteId);
+  const withData = breakdown.filter(c=>c.score!=null);
+  const totalTests = breakdown.reduce((s,c)=>s+c.totalTests,0);
+  const totalDone = breakdown.reduce((s,c)=>s+c.doneCount,0);
+  const completionPct = totalTests ? Math.round((totalDone/totalTests)*100) : 0;
+  let overall = null;
+  if(withData.length){
+    if(cache.perfScoreSettings.method === "weighted"){
+      const weights = cache.perfScoreSettings.weights || {};
+      const weightSum = withData.reduce((s,c)=>s+(Number(weights[c.slug])||0),0);
+      overall = weightSum > 0
+        ? withData.reduce((s,c)=>s+c.score*(Number(weights[c.slug])||0),0) / weightSum
+        : withData.reduce((s,c)=>s+c.score,0) / withData.length; // fallback kalau semua bobot 0
+    } else {
+      overall = withData.reduce((s,c)=>s+c.score,0) / withData.length;
+    }
+  }
+  const lastDate = Math.max(0, ...Object.values(perfLatestByTest(athleteId)).map(r=>r.date));
+  return {
+    breakdown, overall: overall!=null ? Math.round(overall*10)/10 : null,
+    totalTests, totalDone, completionPct,
+    lastDate: lastDate>0 ? lastDate : null,
+    classification: perfClassify(overall!=null ? Math.round(overall*10)/10 : null)
+  };
+}
+
+/* ---- UI: Circular Progress Score ---- */
+function circularScoreSVG(score, color, size){
+  size = size || 180;
+  const r = size/2 - 14, c = 2*Math.PI*r, pct = Math.max(0, Math.min(100, score||0));
+  const offset = c * (1 - pct/100);
+  return `
+    <svg width="${size}" height="${size}" viewBox="0 0 ${size} ${size}" style="display:block;margin:0 auto;">
+      <circle cx="${size/2}" cy="${size/2}" r="${r}" fill="none" stroke="var(--border)" stroke-width="14"/>
+      <circle cx="${size/2}" cy="${size/2}" r="${r}" fill="none" stroke="${color}" stroke-width="14"
+        stroke-linecap="round" stroke-dasharray="${c}" stroke-dashoffset="${offset}"
+        transform="rotate(-90 ${size/2} ${size/2})" style="transition:stroke-dashoffset .6s ease;"/>
+      <text x="50%" y="46%" text-anchor="middle" font-size="${size*0.22}" font-weight="800" fill="var(--text)">${score!=null?score:"–"}</text>
+      <text x="50%" y="60%" text-anchor="middle" font-size="${size*0.075}" fill="var(--muted)">/ 100</text>
+    </svg>
+  `;
+}
+
+/* ---- UI: halaman Performance Score per atlet ---- */
+function athletePerformanceScoreSection(a){
+  const r = perfOverallScore(a.id);
+  const cls = r.classification;
+  const method = cache.perfScoreSettings.method;
+  return `
+    <div class="chart-card" style="text-align:center;">
+      <div style="display:flex;align-items:center;gap:12px;justify-content:center;margin-bottom:12px;flex-wrap:wrap;">
+        ${a.photo ? `<img src="${a.photo}" style="width:44px;height:44px;border-radius:50%;object-fit:cover;"/>` : `<div style="width:44px;height:44px;border-radius:50%;background:var(--turquoise-tint);display:flex;align-items:center;justify-content:center;font-weight:700;">${(a.name||'?')[0]}</div>`}
+        <div style="text-align:left;">
+          <div style="font-weight:800;font-size:14.5px;">${a.name}</div>
+          <div class="helper" style="margin:0;">${a.code||'-'} · ${a.age!=null?a.age+' th':'-'} · ${a.gender==='P'?'Perempuan':'Laki-laki'} · ${a.sport}</div>
+        </div>
+      </div>
+      ${circularScoreSVG(r.overall, cls.color, 180)}
+      <div style="margin-top:10px;">
+        <span class="status-pill" style="background:${cls.color};">${cls.label}</span>
+      </div>
+      <div class="stat-grid" style="margin-top:16px;">
+        <div class="stat-card"><div class="label">TEST ITEM SELESAI</div><div class="value">${r.totalDone}/${r.totalTests}</div></div>
+        <div class="stat-card"><div class="label">KELENGKAPAN TES</div><div class="value">${r.completionPct}%</div></div>
+      </div>
+      <p class="helper" style="margin-top:10px;">${r.lastDate ? `Tes terakhir: ${new Date(r.lastDate).toLocaleDateString("id-ID",{day:"2-digit",month:"short",year:"numeric"})}` : "Belum ada hasil tes yang tercatat."} · Metode: <b>${method==='weighted'?'Weighted Score':'Equal Weight'}</b></p>
+    </div>
+
+    ${isStaff() ? `
+      <div class="chart-card">
+        <h3>Pengaturan Metode Perhitungan</h3>
+        <div style="display:flex;gap:8px;margin-bottom:${method==='weighted'?'14px':'0'};">
+          <button class="btn ${method==='equal'?'':'ghost'} small" style="flex:1;" onclick="setPerfScoreMethod('equal')">Equal Weight</button>
+          <button class="btn ${method==='weighted'?'':'ghost'} small" style="flex:1;" onclick="setPerfScoreMethod('weighted')">Weighted Score</button>
+        </div>
+        ${method==='weighted' ? `
+          <p class="helper" style="margin-bottom:8px;">Bobot per kategori (total idealnya 100%). Kategori tanpa hasil tes otomatis dikeluarkan dan bobot sisanya dinormalisasi ulang.</p>
+          ${PERF_SCORE_CATEGORIES.map(cat=>`
+            <div class="field" style="display:flex;align-items:center;gap:8px;margin-bottom:6px;">
+              <label style="flex:1;margin:0;">${cat.icon} ${cat.label}</label>
+              <input type="number" min="0" max="100" style="width:72px;" value="${cache.perfScoreSettings.weights[cat.slug]||0}"
+                onchange="setPerfScoreWeight('${cat.slug}', this.value)"/>
+              <span class="helper" style="margin:0;width:14px;">%</span>
+            </div>
+          `).join("")}
+          <p class="helper">Total saat ini: <b>${Object.values(cache.perfScoreSettings.weights).reduce((s,v)=>s+(Number(v)||0),0)}%</b></p>
+        ` : ""}
+      </div>
+
+      <div class="chart-card">
+        <div style="display:flex;justify-content:space-between;align-items:center;">
+          <h3 style="margin:0;">Performance Classification</h3>
+          <span style="font-size:11.5px;font-weight:700;color:var(--turquoise-dark);cursor:pointer;" onclick="togglePerfBandEditor()">${state.perfEditingBands?'Batal':'✏️ Edit'}</span>
+        </div>
+        ${!state.perfEditingBands ? `
+          ${[...cache.perfClassBands].sort((a,b)=>b.minScore-a.minScore).map(b=>`
+            <div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid var(--border);">
+              <span class="status-pill" style="background:${b.color};">${b.label}</span>
+              <span class="helper" style="margin:0;">≥ ${b.minScore}</span>
+            </div>
+          `).join("")}
+        ` : `
+          <p class="helper" style="margin-bottom:8px;">Ubah nama kategori dan ambang skor minimum. Klasifikasi ini berlaku untuk Overall Performance Score semua atlet.</p>
+          ${cache.perfClassBands.map((b,i)=>`
+            <div class="field-row" style="margin-bottom:6px;">
+              <div class="field"><label>Label</label><input id="cb-label-${i}" value="${b.label}"/></div>
+              <div class="field"><label>Skor Minimum</label><input id="cb-min-${i}" type="number" min="0" max="100" value="${b.minScore}"/></div>
+            </div>
+          `).join("")}
+          <button class="btn" style="margin-top:6px;" onclick="submitPerfClassBands()">Simpan Klasifikasi</button>
+        `}
+      </div>
+    ` : ""}
+
+    <h3 class="page-title" style="font-size:14px;margin:18px 0 10px;">Breakdown per Kategori</h3>
+    ${r.breakdown.map(cat=>{
+      const catCls = perfClassify(cat.score);
+      const expanded = state.perfExpandedCat === cat.slug;
+      return `
+        <div class="chart-card" style="margin-bottom:10px;">
+          <div style="display:flex;justify-content:space-between;align-items:center;cursor:pointer;" onclick="togglePerfCategory('${cat.slug}')">
+            <div>
+              <b style="font-size:13px;">${cat.icon} ${cat.label}</b>
+              <div class="helper" style="margin:2px 0 0;">${cat.doneCount}/${cat.totalTests} test item${cache.perfScoreSettings.method==='weighted'?` · bobot ${cache.perfScoreSettings.weights[cat.slug]||0}%`:""}</div>
+            </div>
+            <div style="text-align:right;">
+              <span class="status-pill" style="background:${catCls.color};">${cat.score!=null?Math.round(cat.score*10)/10:'–'}</span>
+            </div>
+          </div>
+          <div style="height:6px;background:var(--border);border-radius:4px;margin-top:10px;overflow:hidden;">
+            <div style="width:${cat.score||0}%;background:${catCls.color};height:100%;"></div>
+          </div>
+          ${expanded ? `
+            <div style="margin-top:12px;">
+              ${cat.results.length===0 ? `<div class="chart-empty" style="padding:14px;">Belum ada hasil tes di kategori ini.</div>` : cat.results.map(x=>`
+                <div class="history-row">
+                  <div class="h-left"><b>${x.test.name}</b><span>${x.result.rawScore} ${x.test.unit} · ${new Date(x.result.date).toLocaleDateString("id-ID",{day:"2-digit",month:"short",year:"numeric"})}</span></div>
+                  <span class="badge" style="background:${catColor(x.result.category)}">${Math.round(x.result.score)}</span>
+                </div>
+              `).join("")}
+              ${isStaff() ? `<button class="btn ghost small" style="margin-top:8px;width:auto;" onclick="openModal('addAssessment','${a.id}')">+ Input Hasil Tes</button>` : ""}
+            </div>
+          ` : ""}
+        </div>
+      `;
+    }).join("")}
+
+    ${perfAnalysisAndProgressBlock(a)}
+
+    <div style="display:flex;gap:8px;margin:18px 0;">
+      <button class="btn secondary" style="width:auto;flex:1;" onclick="openPerformanceReport('${a.id}')">📄 Laporan Performa</button>
+    </div>
+  `;
+}
+function togglePerfCategory(slug){ state.perfExpandedCat = state.perfExpandedCat===slug ? null : slug; render(); }
+
+/* ==========================================================
+   PERFORMANCE ANALYSIS (spec #5) & PROGRESS TRACKING (spec #7)
+========================================================== */
+// Persentase perubahan dengan penanganan baseline 0 (spec #7's formula).
+function pctChange(prev, curr){
+  if(prev==null || curr==null) return null;
+  if(prev === 0) return { pct:null, abs: Math.round((curr-prev)*10)/10, zeroBase:true };
+  const pct = ((curr - prev) / Math.abs(prev)) * 100;
+  return { pct: Math.round(pct*10)/10, abs: Math.round((curr-prev)*10)/10, zeroBase:false };
+}
+function fmtChange(ch){
+  if(!ch) return `<span class="helper" style="margin:0;">–</span>`;
+  const up = (ch.zeroBase ? ch.abs : ch.pct) >= 0;
+  const text = ch.zeroBase ? `${up?'+':''}${ch.abs}` : `${up?'+':''}${ch.pct}%`;
+  return `<span style="font-weight:700;color:${up?'var(--good,#1D9E75)':'var(--poor,#E24B4A)'};">${up?'▲':'▼'} ${text}</span>`;
+}
+// Snapshot overall + skor kategori "sampai dengan tanggal ini" untuk setiap
+// tanggal hasil tes yang ada -> jadi dasar Progress Chart & Initial vs Latest.
+function perfHistorySnapshots(athleteId){
+  const rows = loadDB(DB_KEYS.assessments).filter(x=>x.athleteId===athleteId && x.score!=null).sort((a,b)=>a.date-b.date);
+  const dates = [...new Set(rows.map(r=>r.date))];
+  const latestByTest = {};
+  return dates.map(d=>{
+    rows.filter(r=>r.date===d).forEach(r=>{ latestByTest[r.testId] = r; });
+    const catScores = {};
+    PERF_SCORE_CATEGORIES.forEach(cat=>{
+      const catTests = cache.tests.filter(t=>testCategorySlug(t.id)===cat.slug);
+      const results = catTests.map(t=>latestByTest[t.id]).filter(Boolean);
+      catScores[cat.slug] = results.length ? results.reduce((s,r)=>s+r.score,0)/results.length : null;
+    });
+    const withData = Object.values(catScores).filter(v=>v!=null);
+    let overall = null;
+    if(withData.length){
+      if(cache.perfScoreSettings.method==="weighted"){
+        const weights = cache.perfScoreSettings.weights || {};
+        let wsum=0, total=0;
+        PERF_SCORE_CATEGORIES.forEach(cat=>{ if(catScores[cat.slug]!=null){ const w=Number(weights[cat.slug])||0; wsum+=w; total+=catScores[cat.slug]*w; } });
+        overall = wsum>0 ? total/wsum : withData.reduce((s,v)=>s+v,0)/withData.length;
+      } else {
+        overall = withData.reduce((s,v)=>s+v,0)/withData.length;
+      }
+    }
+    return { date:d, overall: overall!=null?Math.round(overall*10)/10:null, categories: catScores };
+  });
+}
+// Perbandingan tiap test item: hasil pertama vs hasil terakhir (hanya tes
+// dengan protokol & satuan yang sama, karena dibandingkan per testId yang sama).
+function perfTestItemComparison(athleteId){
+  const rows = loadDB(DB_KEYS.assessments).filter(x=>x.athleteId===athleteId && x.score!=null);
+  const byTest = {};
+  rows.forEach(r=>{
+    if(!byTest[r.testId]) byTest[r.testId] = { first:r, last:r };
+    else {
+      if(r.date < byTest[r.testId].first.date) byTest[r.testId].first = r;
+      if(r.date > byTest[r.testId].last.date) byTest[r.testId].last = r;
+    }
+  });
+  return Object.entries(byTest).map(([testId,v])=>{
+    const test = cache.tests.find(t=>t.id===testId);
+    if(!test) return null;
+    return { test, first:v.first, last:v.last, improved: v.first.id!==v.last.id, rawChange: pctChange(v.first.rawScore, v.last.rawScore), scoreChange: pctChange(v.first.score, v.last.score) };
+  }).filter(Boolean);
+}
+function perfAnalysis(athleteId){
+  const r = perfOverallScore(athleteId);
+  const withData = r.breakdown.filter(c=>c.score!=null);
+  const sorted = [...withData].sort((x,y)=>y.score-x.score);
+  const highest = sorted[0] || null, lowest = sorted[sorted.length-1] || null;
+  const strengths = withData.filter(c=>c.score>=70);
+  const weaknesses = withData.filter(c=>c.score<60);
+  const gap = (highest && lowest) ? Math.round((highest.score-lowest.score)*10)/10 : null;
+  return { ...r, highest, lowest, strengths, weaknesses, gap };
+}
+function perfRecommendation(an){
+  if(!an.lowest) return "Belum cukup data tes untuk memberi rekomendasi fokus latihan.";
+  if(an.weaknesses.length===0) return "Semua kategori yang sudah dites berada di level yang cukup baik — pertahankan program saat ini, dan lengkapi kategori yang belum dites agar analisis lebih menyeluruh.";
+  const names = an.weaknesses.map(c=>c.label).join(", ");
+  return `Skor kategori terendah saat ini: ${names}. Disarankan menambah porsi latihan pada komponen fisik tersebut pada periode berikutnya. Ini adalah saran berbasis data skor, bukan diagnosis medis atau klaim kemampuan atlet.`;
+}
+function perfAnalysisAndProgressBlock(a){
+  const an = perfAnalysis(a.id);
+  const snaps = perfHistorySnapshots(a.id);
+  const initial = snaps[0] || null, latest = snaps[snaps.length-1] || null;
+  const overallChange = (initial && latest && snaps.length>1) ? pctChange(initial.overall, latest.overall) : null;
+  const itemComparison = perfTestItemComparison(a.id);
+  return `
+    <h3 class="page-title" style="font-size:14px;margin:18px 0 10px;">Performance Analysis</h3>
+    <div class="chart-card">
+      <div class="info-grid">
+        <div class="info-item"><div class="k">Overall Score</div><div class="v">${an.overall!=null?an.overall:'–'}</div></div>
+        <div class="info-item"><div class="k">Performance Gap</div><div class="v">${an.gap!=null?an.gap:'–'}</div></div>
+        <div class="info-item"><div class="k">Kategori Tertinggi</div><div class="v" style="font-size:12.5px;">${an.highest?`${an.highest.icon} ${an.highest.label} (${Math.round(an.highest.score*10)/10})`:'–'}</div></div>
+        <div class="info-item"><div class="k">Kategori Terendah</div><div class="v" style="font-size:12.5px;">${an.lowest?`${an.lowest.icon} ${an.lowest.label} (${Math.round(an.lowest.score*10)/10})`:'–'}</div></div>
+      </div>
+      <p class="helper" style="margin-top:10px;"><b>Strengths:</b> ${an.strengths.length?an.strengths.map(c=>c.label).join(", "):"Belum ada kategori yang menonjol."}</p>
+      <p class="helper"><b>Weaknesses:</b> ${an.weaknesses.length?an.weaknesses.map(c=>c.label).join(", "):"Tidak ada kategori lemah yang menonjol."}</p>
+      <div class="field" style="background:var(--turquoise-tint);border-radius:10px;padding:10px 12px;margin-top:8px;">
+        <b style="font-size:12px;">🎯 Recommended Training Focus</b>
+        <p class="helper" style="margin:4px 0 0;">${perfRecommendation(an)}</p>
+      </div>
+    </div>
+
+    <div class="chart-card">
+      <h3>Radar — Skor per Kategori</h3>
+      ${an.breakdown.some(c=>c.score!=null) ? `<canvas id="chart-perf-radar" height="240"></canvas>` : `<div class="chart-empty">Belum cukup data.</div>`}
+    </div>
+    <div class="chart-card">
+      <h3>Bar — Skor per Test Item</h3>
+      ${itemComparison.length ? `<canvas id="chart-perf-bar" height="${Math.max(140, itemComparison.length*26)}"></canvas>` : `<div class="chart-empty">Belum ada hasil tes.</div>`}
+    </div>
+    <div class="chart-card">
+      <h3>Progress — Overall Score dari Waktu ke Waktu</h3>
+      ${snaps.length>1 ? `<canvas id="chart-perf-progress" height="180"></canvas>` : `<div class="chart-empty">Butuh tes di minimal 2 tanggal berbeda untuk melihat tren.</div>`}
+    </div>
+
+    <h3 class="page-title" style="font-size:14px;margin:18px 0 10px;">Performance Table</h3>
+    <div class="chart-card" style="overflow-x:auto;">
+      <table class="report-table">
+        <thead><tr><th>Test Item</th><th>Kategori</th><th>Raw Score</th><th>Bobot Kategori</th><th>Normalized</th><th>Klasifikasi</th></tr></thead>
+        <tbody>
+          ${an.breakdown.flatMap(cat=>cat.results.map(x=>`
+            <tr>
+              <td>${x.test.name}</td><td>${cat.label}</td><td>${x.result.rawScore} ${x.test.unit}</td>
+              <td>${cache.perfScoreSettings.method==='weighted' ? (cache.perfScoreSettings.weights[cat.slug]||0)+'%' : '-'}</td>
+              <td>${Math.round(x.result.score)}</td>
+              <td><span class="badge" style="background:${catColor(x.result.category)}">${x.result.category||'-'}</span></td>
+            </tr>
+          `)).join("") || `<tr><td colspan="6" style="text-align:center;color:var(--muted);">Belum ada hasil tes.</td></tr>`}
+        </tbody>
+      </table>
+    </div>
+
+    <h3 class="page-title" style="font-size:14px;margin:18px 0 10px;">Athlete Progress Tracking</h3>
+    <div class="chart-card">
+      ${!initial || snaps.length<2 ? `<div class="chart-empty">Butuh hasil tes di minimal 2 tanggal berbeda untuk melacak progress.</div>` : `
+        <div class="info-grid">
+          <div class="info-item"><div class="k">Initial Test (${new Date(initial.date).toLocaleDateString("id-ID",{day:"2-digit",month:"short",year:"numeric"})})</div><div class="v">${initial.overall??'–'}</div></div>
+          <div class="info-item"><div class="k">Latest Test (${new Date(latest.date).toLocaleDateString("id-ID",{day:"2-digit",month:"short",year:"numeric"})})</div><div class="v">${latest.overall??'–'}</div></div>
+        </div>
+        <p class="helper" style="margin-top:8px;">Overall Score Progress: ${fmtChange(overallChange)}</p>
+        <div style="margin-top:10px;">
+          <b style="font-size:12px;">Category Score Progress</b>
+          ${PERF_SCORE_CATEGORIES.map(cat=>{
+            const ch = pctChange(initial.categories[cat.slug], latest.categories[cat.slug]);
+            if(initial.categories[cat.slug]==null && latest.categories[cat.slug]==null) return "";
+            return `<div class="history-row"><div class="h-left"><b>${cat.icon} ${cat.label}</b><span>${initial.categories[cat.slug]??'–'} → ${latest.categories[cat.slug]??'–'}</span></div>${fmtChange(ch)}</div>`;
+          }).join("")}
+        </div>
+      `}
+    </div>
+    ${itemComparison.length ? `
+    <div class="chart-card" style="overflow-x:auto;">
+      <b style="font-size:12px;">Test Item Comparison (hasil pertama vs terbaru)</b>
+      <table class="report-table" style="margin-top:8px;">
+        <thead><tr><th>Test Item</th><th>Awal</th><th>Terbaru</th><th>Perubahan Skor</th></tr></thead>
+        <tbody>
+          ${itemComparison.map(x=>`
+            <tr>
+              <td>${x.test.name}</td>
+              <td>${x.first.rawScore} ${x.test.unit}</td>
+              <td>${x.last.rawScore} ${x.test.unit}</td>
+              <td>${x.improved ? fmtChange(x.scoreChange) : '<span class="helper" style="margin:0;">Baru 1 kali tes</span>'}</td>
+            </tr>
+          `).join("")}
+        </tbody>
+      </table>
+    </div>
+    ` : ""}
+  `;
+}
+function drawPerfScoreCharts(athleteId){
+  const an = perfAnalysis(athleteId);
+  destroyChart("chart-perf-radar");
+  const radarEl = document.getElementById("chart-perf-radar");
+  if(radarEl){
+    chartInstances["chart-perf-radar"] = new Chart(radarEl, {
+      type:"radar",
+      data:{ labels: an.breakdown.map(c=>c.label), datasets:[{ label:"Skor", data: an.breakdown.map(c=>c.score??0), borderColor:"#159A94", backgroundColor:"rgba(21,154,148,0.2)", pointRadius:3 }] },
+      options:{ responsive:true, scales:{ r:{ min:0, max:100, ticks:{stepSize:25, font:{size:9}}, pointLabels:{font:{size:10}} } }, plugins:{ legend:{display:false} } }
+    });
+  }
+  destroyChart("chart-perf-bar");
+  const barEl = document.getElementById("chart-perf-bar");
+  if(barEl){
+    const items = perfTestItemComparison(athleteId);
+    chartInstances["chart-perf-bar"] = new Chart(barEl, {
+      type:"bar",
+      data:{ labels: items.map(x=>x.test.name), datasets:[{ label:"Skor Terbaru", data: items.map(x=>Math.round(x.last.score)), backgroundColor:"#20B2AA" }] },
+      options:{ indexAxis:"y", responsive:true, plugins:{legend:{display:false}}, scales:{ x:{min:0,max:100, ticks:{font:{size:9}}}, y:{ticks:{font:{size:10}}} } }
+    });
+  }
+  destroyChart("chart-perf-progress");
+  const progEl = document.getElementById("chart-perf-progress");
+  if(progEl){
+    const snaps = perfHistorySnapshots(athleteId);
+    chartInstances["chart-perf-progress"] = new Chart(progEl, {
+      type:"line",
+      data:{ labels: snaps.map(s=>new Date(s.date).toLocaleDateString("id-ID",{day:"2-digit",month:"short"})), datasets:[{ label:"Overall Score", data: snaps.map(s=>s.overall), borderColor:"#159A94", backgroundColor:"rgba(21,154,148,0.1)", pointRadius:4, tension:0.2, fill:true }] },
+      options:{ responsive:true, scales:{ y:{min:0,max:100, ticks:{font:{size:9}}}, x:{ticks:{font:{size:9}}} }, plugins:{legend:{display:false}} }
+    });
+  }
+}
+async function setPerfScoreMethod(method){
+  if(!isStaff()) return;
+  cache.perfScoreSettings.method = method;
+  render();
+  if(!sb) return;
+  await sb.from("performance_score_settings").upsert({ id:1, method, weights: cache.perfScoreSettings.weights }, { onConflict:"id" });
+}
+async function setPerfScoreWeight(slug, val){
+  if(!isStaff()) return;
+  cache.perfScoreSettings.weights = { ...cache.perfScoreSettings.weights, [slug]: Math.max(0, Math.min(100, Number(val)||0)) };
+  render();
+  if(!sb) return;
+  await sb.from("performance_score_settings").upsert(
+    { id:1, method: cache.perfScoreSettings.method, weights: cache.perfScoreSettings.weights }, { onConflict:"id" }
+  );
+}
+function togglePerfBandEditor(){ state.perfEditingBands = !state.perfEditingBands; render(); }
+async function submitPerfClassBands(){
+  if(!isStaff()) return;
+  const rows = cache.perfClassBands.map((b,i)=>({
+    orig:b,
+    label: (document.getElementById(`cb-label-${i}`)?.value || "").trim(),
+    minScore: Number(document.getElementById(`cb-min-${i}`)?.value)
+  }));
+  for(const r of rows){
+    if(!r.label || isNaN(r.minScore)){ showToast("Isi semua label & skor minimum dengan angka yang valid."); return; }
+  }
+  if(!sb){ showToast("Tidak terhubung ke database."); return; }
+  for(const r of rows){
+    if(r.orig.id){
+      await sb.from("performance_classification_bands").update({ label:r.label, min_score:r.minScore }).eq("id", r.orig.id);
+    } else {
+      await sb.from("performance_classification_bands").insert({ label:r.label, min_score:r.minScore, color:r.orig.color });
+    }
+  }
+  await refreshPerfClassBands();
+  state.perfEditingBands = false;
+  render();
+  showToast("Klasifikasi performa tersimpan.");
+}
+
+/* ==========================================================
+   AUTOMATIC PERFORMANCE REPORT (spec #8)
+========================================================== */
+function viewPerformanceReport(){
+  const a = cache.athletes.find(x=>x.id===state.reportAthleteId);
+  if(!a) return `<div class="chart-empty">Atlet tidak ditemukan.</div><button class="btn ghost" onclick="backFromReport()">← Kembali</button>`;
+  if(state.reportCompareId) return perfCompareView(a);
+
+  const an = perfAnalysis(a.id);
+  const snaps = perfHistorySnapshots(a.id);
+  const initial = snaps[0] || null, latest = snaps[snaps.length-1] || null;
+  const overallChange = (initial && latest && snaps.length>1) ? pctChange(initial.overall, latest.overall) : null;
+  const allRows = an.breakdown.flatMap(cat=>cat.results.map(x=>({cat,...x})));
+
+  return `
+    <div class="no-print" style="display:flex;gap:8px;margin-bottom:14px;flex-wrap:wrap;">
+      <button class="btn ghost small" style="width:auto;" onclick="backFromReport()">← Kembali</button>
+      <button class="btn small" style="width:auto;" onclick="window.print()">🖨 Print / Simpan sebagai PDF</button>
+      <button class="btn secondary small" style="width:auto;" onclick="exportReportCSV('${a.id}')">⬇ Export Excel (CSV)</button>
+      <button class="btn secondary small" style="width:auto;" onclick="downloadReportHTML('${a.id}')">⬇ Download Laporan (HTML)</button>
+      <button class="btn ghost small" style="width:auto;" onclick="openCompareReportPicker('${a.id}')">⚖️ Compare Athlete Reports</button>
+    </div>
+    <div class="report-page" id="report-root" style="background:var(--card);border-radius:14px;padding:18px;">
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;border-bottom:2px solid var(--turquoise);padding-bottom:10px;margin-bottom:14px;">
+        <div><div style="font-weight:800;font-size:16px;">FIGHT WITH JO</div><div class="helper" style="margin:0;">Performance App — Laporan Performa Atlet</div></div>
+        <div class="helper" style="margin:0;text-align:right;">Dicetak: ${new Date().toLocaleDateString("id-ID",{day:"2-digit",month:"long",year:"numeric"})}</div>
+      </div>
+
+      <h3>Athlete Profile</h3>
+      <div class="info-grid">
+        <div class="info-item"><div class="k">Nama</div><div class="v">${a.name}</div></div>
+        <div class="info-item"><div class="k">ID Atlet</div><div class="v">${a.code||'-'}</div></div>
+        <div class="info-item"><div class="k">Usia / Gender</div><div class="v">${a.age??'-'} th · ${a.gender==='P'?'Perempuan':'Laki-laki'}</div></div>
+        <div class="info-item"><div class="k">Cabang Olahraga</div><div class="v">${a.sport}${a.level?' · '+a.level:''}</div></div>
+        <div class="info-item"><div class="k">Tanggal Tes Terakhir</div><div class="v">${an.lastDate?new Date(an.lastDate).toLocaleDateString("id-ID",{day:"2-digit",month:"short",year:"numeric"}):'-'}</div></div>
+        <div class="info-item"><div class="k">Kelengkapan Tes</div><div class="v">${an.totalDone}/${an.totalTests} (${an.completionPct}%)</div></div>
+      </div>
+
+      <h3>Overall Performance Score & Classification</h3>
+      <div style="display:flex;align-items:center;gap:16px;flex-wrap:wrap;margin-bottom:10px;">
+        ${circularScoreSVG(an.overall, an.classification.color, 120)}
+        <div>
+          <span class="status-pill" style="background:${an.classification.color};">${an.classification.label}</span>
+          <p class="helper" style="margin-top:6px;">Metode: ${cache.perfScoreSettings.method==='weighted'?'Weighted Score':'Equal Weight'}</p>
+        </div>
+      </div>
+
+      <h3>Category Score Analysis</h3>
+      <table class="report-table" style="margin-bottom:14px;">
+        <thead><tr><th>Kategori</th><th>Skor</th><th>Klasifikasi</th><th>Test Item Selesai</th></tr></thead>
+        <tbody>
+          ${an.breakdown.map(c=>`<tr><td>${c.icon} ${c.label}</td><td>${c.score!=null?Math.round(c.score*10)/10:'–'}</td><td>${perfClassify(c.score).label}</td><td>${c.doneCount}/${c.totalTests}</td></tr>`).join("")}
+        </tbody>
+      </table>
+
+      <h3>Strengths & Weaknesses</h3>
+      <p class="helper"><b>Strengths:</b> ${an.strengths.length?an.strengths.map(c=>c.label).join(", "):"Belum ada kategori yang menonjol."}</p>
+      <p class="helper"><b>Weaknesses:</b> ${an.weaknesses.length?an.weaknesses.map(c=>c.label).join(", "):"Tidak ada kategori lemah yang menonjol."}</p>
+      <div class="field" style="background:var(--turquoise-tint);border-radius:10px;padding:10px 12px;margin:8px 0 14px;">
+        <b style="font-size:12px;">🎯 Recommended Training Focus</b>
+        <p class="helper" style="margin:4px 0 0;">${perfRecommendation(an)}</p>
+      </div>
+
+      <h3>Individual Test Results</h3>
+      <table class="report-table" style="margin-bottom:14px;">
+        <thead><tr><th>Test Item</th><th>Kategori</th><th>Tanggal</th><th>Raw Score</th><th>Normalized</th><th>Klasifikasi</th></tr></thead>
+        <tbody>
+          ${allRows.length ? allRows.map(x=>`<tr><td>${x.test.name}</td><td>${x.cat.label}</td><td>${new Date(x.result.date).toLocaleDateString("id-ID",{day:"2-digit",month:"short",year:"numeric"})}</td><td>${x.result.rawScore} ${x.test.unit}</td><td>${Math.round(x.result.score)}</td><td>${x.result.category||'-'}</td></tr>`).join("") : `<tr><td colspan="6" style="text-align:center;color:var(--muted);">Belum ada hasil tes.</td></tr>`}
+        </tbody>
+      </table>
+
+      <h3>Progress Comparison</h3>
+      ${!initial || snaps.length<2 ? `<p class="helper">Butuh hasil tes di minimal 2 tanggal berbeda untuk melihat progress.</p>` : `
+        <p class="helper">Initial Test (${new Date(initial.date).toLocaleDateString("id-ID",{day:"2-digit",month:"short",year:"numeric"})}): <b>${initial.overall}</b> → Latest Test (${new Date(latest.date).toLocaleDateString("id-ID",{day:"2-digit",month:"short",year:"numeric"})}): <b>${latest.overall}</b> — ${fmtChange(overallChange)}</p>
+      `}
+
+      <h3 class="no-print">Coach Evaluation</h3>
+      <div class="field no-print">
+        <textarea id="report-evaluation" rows="4" placeholder="Catatan evaluasi pelatih untuk periode ini..." oninput="state.reportEvaluationDraft=this.value">${state.reportEvaluationDraft||""}</textarea>
+      </div>
+      ${isStaff() ? `<button class="btn ghost small no-print" style="width:auto;" onclick="saveCoachEvaluation('${a.id}')">💾 Simpan sebagai Catatan Coach</button>` : ""}
+    </div>
+  `;
+}
+async function saveCoachEvaluation(athleteId){
+  const text = document.getElementById("report-evaluation").value.trim();
+  if(!text){ showToast("Isi evaluasi dulu sebelum disimpan."); return; }
+  const { error } = await sb.from("athlete_notes").insert({
+    athlete_id: athleteId, note_date: new Date().toISOString().slice(0,10),
+    category: "Performance", note: `[Laporan Performa] ${text}`, priority: "Medium"
+  });
+  if(error){ showToast("Gagal menyimpan: " + error.message); return; }
+  await refreshNotes();
+  state.reportEvaluationDraft = "";
+  render();
+  showToast("Evaluasi tersimpan ke Catatan Coach.");
+}
+function exportReportCSV(athleteId){
+  const a = cache.athletes.find(x=>x.id===athleteId); if(!a) return;
+  const an = perfAnalysis(athleteId);
+  const rows = [["Test Item","Kategori","Tanggal","Raw Score","Unit","Normalized Score","Klasifikasi"]];
+  an.breakdown.forEach(cat=>cat.results.forEach(x=>{
+    rows.push([x.test.name, cat.label, new Date(x.result.date).toISOString().slice(0,10), x.result.rawScore, x.test.unit, Math.round(x.result.score), x.result.category||""]);
+  }));
+  rows.push([]); rows.push(["Overall Score", an.overall??""]); rows.push(["Classification", an.classification.label]);
+  const csv = rows.map(r=>r.map(v=>`"${String(v).replace(/"/g,'""')}"`).join(",")).join("\n");
+  const blob = new Blob([csv], {type:"text/csv;charset=utf-8;"});
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a"); link.href = url; link.download = `Laporan-${a.code||a.name}-${new Date().toISOString().slice(0,10)}.csv`;
+  link.click(); URL.revokeObjectURL(url);
+}
+function downloadReportHTML(athleteId){
+  const a = cache.athletes.find(x=>x.id===athleteId); if(!a) return;
+  const content = document.getElementById("report-root").outerHTML;
+  const styleTags = Array.from(document.querySelectorAll("style")).map(s=>s.outerHTML).join("");
+  const html = `<!DOCTYPE html><html lang="id"><head><meta charset="UTF-8"><title>Laporan Performa - ${a.name}</title>${styleTags}</head><body style="padding:20px;background:var(--bg,#F4F6F5);">${content}</body></html>`;
+  const blob = new Blob([html], {type:"text/html;charset=utf-8;"});
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a"); link.href = url; link.download = `Laporan-${a.code||a.name}-${new Date().toISOString().slice(0,10)}.html`;
+  link.click(); URL.revokeObjectURL(url);
+}
+function openCompareReportPicker(athleteId){
+  const others = cache.athletes.filter(x=>x.id!==athleteId);
+  if(!others.length){ showToast("Belum ada atlet lain untuk dibandingkan."); return; }
+  openModal("compareReportPick", athleteId);
+}
+function modalCompareReportPick(athleteId){
+  const others = cache.athletes.filter(x=>x.id!==athleteId);
+  return `
+    <div class="modal-head"><h3>Compare Athlete Reports</h3><button class="close-x" onclick="closeModal()">✕</button></div>
+    <div class="field"><label>Bandingkan dengan atlet</label>
+      <select id="cmp-report-athlete">${others.map(o=>`<option value="${o.id}">${o.name} (${o.code||'-'})</option>`).join("")}</select>
+    </div>
+    <button class="btn" onclick="submitCompareReport('${athleteId}')">Bandingkan</button>
+  `;
+}
+function submitCompareReport(athleteId){
+  const otherId = document.getElementById("cmp-report-athlete").value;
+  closeModal();
+  state.reportAthleteId = athleteId; state.reportCompareId = otherId;
+  render();
+}
+function perfCompareView(a){
+  const b = cache.athletes.find(x=>x.id===state.reportCompareId);
+  if(!b) return `<div class="chart-empty">Atlet pembanding tidak ditemukan.</div>`;
+  const anA = perfAnalysis(a.id), anB = perfAnalysis(b.id);
+  return `
+    <div class="no-print" style="display:flex;gap:8px;margin-bottom:14px;flex-wrap:wrap;">
+      <button class="btn ghost small" style="width:auto;" onclick="state.reportCompareId=null; render();">← Kembali ke Laporan</button>
+      <button class="btn small" style="width:auto;" onclick="window.print()">🖨 Print</button>
+    </div>
+    <div class="report-page" style="background:var(--card);border-radius:14px;padding:18px;">
+      <h3>Compare Athlete Reports</h3>
+      <div class="info-grid">
+        <div class="info-item"><div class="k">${a.name}</div><div class="v">${anA.overall??'–'} · ${anA.classification.label}</div></div>
+        <div class="info-item"><div class="k">${b.name}</div><div class="v">${anB.overall??'–'} · ${anB.classification.label}</div></div>
+      </div>
+      <table class="report-table" style="margin-top:14px;">
+        <thead><tr><th>Kategori</th><th>${a.name}</th><th>${b.name}</th><th>Selisih</th></tr></thead>
+        <tbody>
+          ${PERF_SCORE_CATEGORIES.map(cat=>{
+            const sa = anA.breakdown.find(c=>c.slug===cat.slug).score;
+            const sb_ = anB.breakdown.find(c=>c.slug===cat.slug).score;
+            const diff = (sa!=null && sb_!=null) ? Math.round((sa-sb_)*10)/10 : null;
+            return `<tr><td>${cat.icon} ${cat.label}</td><td>${sa!=null?Math.round(sa*10)/10:'–'}</td><td>${sb_!=null?Math.round(sb_*10)/10:'–'}</td><td>${diff!=null?(diff>0?'+':'')+diff:'–'}</td></tr>`;
+          }).join("")}
+        </tbody>
+      </table>
+    </div>
+  `;
 }
 
 /* ==========================================================
@@ -1129,7 +1796,8 @@ function bodySilhouette(){
 let state = {
   tab:"dashboard", modal:null,
   athleteId:null, athleteSection:"overview",
-  profileTestId:null, baTestId:null,
+  profileTestId:null, baTestId:null, perfExpandedCat:null, perfEditingBands:false,
+  reportAthleteId:null, reportCompareId:null, reportEvaluationDraft:"",
   bodyView:"front", selectedPart:null,
   photoTarget:null, pendingPhoto:null,
   filters:{ part:"", severity:"", status:"" },
@@ -1200,6 +1868,8 @@ function render(){
   renderMain();
   if(state.modal) renderModal();
 }
+function openPerformanceReport(athleteId){ state.tab = "report"; state.reportAthleteId = athleteId; state.reportCompareId = null; state.reportEvaluationDraft = ""; render(); }
+function backFromReport(){ state.tab = "athletes"; render(); }
 function navBtn(key, icon, label){
   return `<button class="${state.tab===key?'active':''}" onclick="setTab('${key}')"><span class="ic">${icon}</span><span>${label}</span></button>`;
 }
@@ -1222,10 +1892,13 @@ function renderMain(){
   if(state.tab === "calendar") main.innerHTML = viewCalendar();
   if(state.tab === "competitions") main.innerHTML = state.competitionId ? viewCompetitionDetail() : viewCompetitionList();
   if(state.tab === "admin") main.innerHTML = viewAdminPanel();
+  if(state.tab === "report") main.innerHTML = viewPerformanceReport();
 
   if(state.tab === "dashboard") drawDashboardChart();
   if(state.tab === "compare") drawComparisonChart();
+  if(state.tab === "report" && state.reportAthleteId && !state.reportCompareId) drawPerfScoreCharts(state.reportAthleteId);
   if(state.tab === "athletes" && state.athleteId){
+    if(state.athleteSection === "score") drawPerfScoreCharts(state.athleteId);
     if(state.athleteSection === "performance") { drawProfileChart(); drawScoreTrendChart(); }
     if(state.athleteSection === "improvement") drawImprovementChart();
     if(state.athleteSection === "readiness") drawReadinessChart();
@@ -1772,7 +2445,7 @@ function viewScoringStandards(){
         return `
           <div class="chart-card">
             <div style="display:flex;justify-content:space-between;align-items:center;">
-              <b style="font-size:13px;">${p.gender}${p.ageGroup?' · '+p.ageGroup:''}${p.sport?' · '+p.sport:''}${p.position?' · '+p.position:''}</b>
+              <b style="font-size:13px;">${p.gender}${p.ageGroup?' · '+p.ageGroup:''}${p.sport?' · '+p.sport:''}${p.position?' · '+p.position:''}${p.level?' · '+p.level:''}</b>
               <span class="badge" style="background:${p.isActive?'#1D9E75':'#5B6664'}">${p.isActive?'Aktif':'Nonaktif'}</span>
             </div>
             <p class="helper" style="margin:4px 0 8px;">${p.direction==='lower'?'Makin rendah makin baik':'Makin tinggi makin baik'} · unit: ${p.unit||'-'}</p>
@@ -1817,6 +2490,12 @@ function scoringProfileFormFields(profile, prefillTestId, prefillGender){
     <div class="field-row">
       <div class="field"><label>Sport (opsional)</label><input id="sp-sport" value="${profile&&profile.sport?profile.sport:''}" placeholder="cth. Muaythai"/></div>
       <div class="field"><label>Position (opsional)</label><input id="sp-position" value="${profile&&profile.position?profile.position:''}" placeholder="opsional"/></div>
+    </div>
+    <div class="field"><label>Athlete Level (opsional)</label>
+      <select id="sp-level">
+        <option value="">Semua level</option>
+        ${["Beginner","Intermediate","Advanced","Elite"].map(g=>`<option value="${g}" ${profile&&profile.level===g?'selected':''}>${g}</option>`).join("")}
+      </select>
     </div>
     <div class="field-row">
       <div class="field"><label>Scoring Direction</label>
@@ -1889,6 +2568,7 @@ async function submitScoringProfile(profileId){
   const ageGroup = document.getElementById("sp-agegroup").value || null;
   const sport = document.getElementById("sp-sport").value.trim() || null;
   const position = document.getElementById("sp-position").value.trim() || null;
+  const level = document.getElementById("sp-level").value || null;
   const direction = document.getElementById("sp-direction").value;
   const unit = document.getElementById("sp-unit").value.trim();
   const isActive = document.getElementById("sp-active").checked;
@@ -1901,9 +2581,9 @@ async function submitScoringProfile(profileId){
   if(!profileId){
     const dup = loadDB(DB_KEYS.scoringProfiles).find(p =>
       p.testId===testId && p.gender===gender && (p.ageGroup||null)===ageGroup &&
-      (p.sport||null)===sport && (p.position||null)===position
+      (p.sport||null)===sport && (p.position||null)===position && (p.level||null)===level
     );
-    if(dup){ errBox.style.display="block"; errBox.textContent = "Standar dengan kombinasi test+gender+age group+sport+position ini sudah ada."; return; }
+    if(dup){ errBox.style.display="block"; errBox.textContent = "Standar dengan kombinasi test+gender+age group+sport+position+level ini sudah ada."; return; }
   }
   errBox.style.display="none";
 
@@ -1917,7 +2597,7 @@ async function submitScoringProfile(profileId){
     await sb.from("test_scoring_ranges").delete().eq("scoring_profile_id", profileId);
   } else {
     const { data: row, error } = await sb.from("test_scoring_profiles").insert({
-      test_id: testId, gender, age_group: ageGroup, sport, position,
+      test_id: testId, gender, age_group: ageGroup, sport, position, athlete_level: level,
       scoring_direction: direction === "lower" ? "lower_better" : "higher_better",
       unit, is_active: isActive
     }).select().single();
@@ -2347,6 +3027,12 @@ function modalAddAthlete(){
       <div class="field"><label>Tinggi (cm)</label><input id="a-height" type="number" placeholder="175"/></div>
       <div class="field"><label>Berat (kg)</label><input id="a-weight" type="number" placeholder="68"/></div>
     </div>
+    <div class="field"><label>Athlete Level (untuk benchmark skor, opsional)</label>
+      <select id="a-level">
+        <option value="">— Belum ditentukan —</option>
+        <option>Beginner</option><option>Intermediate</option><option>Advanced</option><option>Elite</option>
+      </select>
+    </div>
     <div id="a-err" class="err" style="display:none;"></div>
     <button class="btn" id="a-submit-btn" onclick="submitAddAthlete()">Simpan Atlet</button>
   `;
@@ -2399,6 +3085,7 @@ async function submitAddAthlete(){
     date_of_birth: dob,
     height_cm: Number(document.getElementById("a-height").value) || null,
     weight_kg: Number(document.getElementById("a-weight").value) || null,
+    level: document.getElementById("a-level").value || null,
     status: STATUS_UI_TO_DB[document.getElementById("a-status").value] || "active"
   }).select().single();
 
@@ -2559,6 +3246,7 @@ function viewAthleteDetail(){
 
     <div class="section-tabs">
       <button class="${state.athleteSection==='overview'?'active':''}" onclick="setAthleteSection('overview')">Ringkasan</button>
+      <button class="${state.athleteSection==='score'?'active':''}" onclick="setAthleteSection('score')">Performance Score</button>
       <button class="${state.athleteSection==='readiness'?'active':''}" onclick="setAthleteSection('readiness')">Readiness</button>
       <button class="${state.athleteSection==='load'?'active':''}" onclick="setAthleteSection('load')">Training Load</button>
       <button class="${state.athleteSection==='goals'?'active':''}" onclick="setAthleteSection('goals')">Goals</button>
@@ -2573,6 +3261,7 @@ function viewAthleteDetail(){
 
     <div id="athlete-section-body">
       ${state.athleteSection==='overview' ? athleteOverview(a) : ""}
+      ${state.athleteSection==='score' ? athletePerformanceScoreSection(a) : ""}
       ${state.athleteSection==='readiness' ? athleteReadinessSection(a) : ""}
       ${state.athleteSection==='load' ? athleteLoadSection(a) : ""}
       ${state.athleteSection==='goals' ? athleteGoalsSection(a) : ""}
@@ -5441,6 +6130,7 @@ function renderModal(){
   if(state.modal.name==="importScoringStandards") modal.innerHTML = modalImportScoringStandards();
   if(state.modal.name==="editDailyPlan") modal.innerHTML = modalEditDailyPlan(state.modal.payload);
   if(state.modal.name==="duplicateProgram") modal.innerHTML = modalDuplicateProgram(state.modal.payload);
+  if(state.modal.name==="compareReportPick") modal.innerHTML = modalCompareReportPick(state.modal.payload);
   if(state.modal.name==="completeSession") modal.innerHTML = modalCompleteSession(state.modal.payload);
   if(state.modal.name==="backup") modal.innerHTML = modalBackup();
   if(state.modal.name==="addMasterplan") modal.innerHTML = modalAddMasterplan();
