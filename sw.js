@@ -11,7 +11,7 @@
 
    Setiap kali mengubah index.html, naikkan CACHE_VERSION supaya user dapat versi baru. */
 
-const CACHE_VERSION = "v4";
+const CACHE_VERSION = "v5";
 const CACHE_NAME = `fwj-app-${CACHE_VERSION}`;
 
 const APP_SHELL = [
