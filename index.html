@@ -375,6 +375,9 @@ const DB_KEYS = { athletes:"athletes", tests:"tests", assessments:"assessments",
 
 let cache = { athletes:[], tests:[], assessments:[], injuries:[], testCategories:[], bodyParts:[], profile:null, readiness:[], loads:[], goals:[], batteries:[], batterySessions:[], rehabLogs:[], asymmetry:[], notes:[], competitions:[], competitionResults:[], masterplans:[], scoringProfiles:[], scoringRanges:[],
   perfScoreSettings: { method:"equal", weights:{ strength:25, power:20, speed:20, agility:15, endurance:15, "flexibility-mobility":5 } },
+  allTests: [], // semua test (aktif + nonaktif) untuk halaman Test Management; cache.tests tetap hanya yang aktif
+  athleteSelectedTests: {}, // { [athleteId]: Set(testId) | null }  null = belum dikonfigurasi -> pakai semua test aktif
+  resultCountsByTest: {}, // { [testId]: jumlah performance_results } untuk Test Management & safe-delete
   perfClassBands: [
     { id:null, label:"Elite", minScore:90, color:"#1D9E75" },
     { id:null, label:"Advanced", minScore:80, color:"#159A94" },
@@ -400,7 +403,7 @@ function mapTestRow(t){
     id: t.id, name: t.name, unit: t.unit, desc: t.description || "",
     iconKey: cat.slug || "other", icon: cat.icon || "🏅",
     direction: t.higher_is_better ? "higher" : "lower",
-    categoryId: t.category_id,
+    categoryId: t.category_id, isActive: t.is_active !== false,
     benchmarks: { poor:Number(b.poor), average:Number(b.average), good:Number(b.good), elite:Number(b.elite) }
   };
 }
@@ -682,6 +685,26 @@ async function refreshMasterplans(){
   try{ localStorage.setItem(MP_KEY, JSON.stringify(cache.masterplans)); }catch(e){}
 }
 
+async function refreshAllTestsForManagement(){
+  if(!sb) return;
+  const { data, error } = await sb.from("tests").select("*, test_categories(name,icon,slug)").order("name",{ascending:true});
+  if(error) return;
+  cache.allTests = (data||[]).map(mapTestRow);
+  const { data: results } = await sb.from("performance_results").select("test_id");
+  cache.resultCountsByTest = {};
+  (results||[]).forEach(r=>{ if(r.test_id) cache.resultCountsByTest[r.test_id] = (cache.resultCountsByTest[r.test_id]||0)+1; });
+}
+async function refreshAthleteSelectedTests(athleteId){
+  if(!sb) return;
+  const { data, error } = await sb.from("athlete_selected_tests").select("test_id").eq("athlete_id", athleteId);
+  if(error){ cache.athleteSelectedTests[athleteId] = null; return; }
+  cache.athleteSelectedTests[athleteId] = data && data.length ? new Set(data.map(r=>r.test_id)) : null;
+}
+// Set test_id yang dipakai untuk Performance Score atlet ini. null = belum
+// dikonfigurasi coach -> pakai SEMUA test aktif (perilaku default/lama).
+function perfSelectedTestIds(athleteId){
+  return cache.athleteSelectedTests[athleteId] || null;
+}
 async function refreshPerfScoreSettings(){
   if(!sb) return;
   const { data, error } = await sb.from("performance_score_settings").select("*").eq("id",1).maybeSingle();
@@ -845,8 +868,16 @@ function testCategorySlug(testId){
 }
 // Hasil valid terbaru per test item untuk 1 atlet (satu baris per testId,
 // yang paling baru tanggalnya, dan hanya yang punya computed score).
+// HANYA mempertimbangkan test yang dipilih coach untuk atlet ini (Select
+// Tests) — kalau belum dikonfigurasi, pakai semua test AKTIF. Test yang
+// belum dilakukan TIDAK PERNAH dianggap 0 — baris itu memang tidak ada.
 function perfLatestByTest(athleteId){
-  const rows = loadDB(DB_KEYS.assessments).filter(x=>x.athleteId===athleteId && x.score!=null);
+  const selected = perfSelectedTestIds(athleteId); // null = semua test aktif
+  const rows = loadDB(DB_KEYS.assessments).filter(x=>
+    x.athleteId===athleteId && x.score!=null &&
+    (!selected || selected.has(x.testId)) &&
+    cache.tests.some(t=>t.id===x.testId) // harus test yang masih aktif & punya scoring standard valid
+  );
   const byTest = {};
   rows.forEach(r=>{
     const cur = byTest[r.testId];
@@ -854,13 +885,21 @@ function perfLatestByTest(athleteId){
   });
   return byTest;
 }
-// Breakdown per 6 kategori Performance Score System: skor rata-rata
-// kategori (null kalau belum ada tes valid), jumlah tes selesai/total,
-// dan daftar hasil tes individual untuk ditampilkan.
+// Daftar test yang MASUK HITUNGAN untuk atlet ini (yang dipilih coach, atau
+// semua test aktif kalau belum dikonfigurasi) — dipakai untuk "Tests Used: N"
+// dan pesan kelengkapan, bukan untuk memaksa semua test harus dikerjakan.
+function perfEligibleTests(athleteId){
+  const selected = perfSelectedTestIds(athleteId);
+  return selected ? cache.tests.filter(t=>selected.has(t.id)) : cache.tests;
+}
+// Breakdown per 6 kategori Performance Score System — murni untuk tampilan
+// (radar chart, kartu kategori). Overall Performance Score TIDAK dihitung
+// dari rata-rata kategori ini lagi (lihat perfOverallScore).
 function perfCategoryBreakdown(athleteId){
   const latest = perfLatestByTest(athleteId);
+  const eligible = perfEligibleTests(athleteId);
   return PERF_SCORE_CATEGORIES.map(cat=>{
-    const catTests = cache.tests.filter(t=>testCategorySlug(t.id)===cat.slug);
+    const catTests = eligible.filter(t=>testCategorySlug(t.id)===cat.slug);
     const results = catTests
       .map(t=>({ test:t, result: latest[t.id] || null }))
       .filter(x=>x.result);
@@ -868,43 +907,62 @@ function perfCategoryBreakdown(athleteId){
     return { ...cat, totalTests: catTests.length, doneCount: results.length, score, results };
   });
 }
-// Performance Classification (spec #4) — band & threshold diambil dari
+// Performance Classification (spec #4/#8) — band & threshold diambil dari
 // cache.perfClassBands (tabel performance_classification_bands), bukan
 // hardcode, supaya Admin/Pelatih bisa mengubahnya sesuai kebutuhan program.
+// HANYA dipakai untuk Overall Performance Score, bukan skor per test item.
 function perfClassify(score){
   if(score==null) return { label:"Belum ada data", color:"#5B6664" };
   const bands = [...cache.perfClassBands].sort((a,b)=>b.minScore-a.minScore);
   const band = bands.find(b=>score>=b.minScore) || bands[bands.length-1];
   return band ? { label:band.label, color:band.color } : { label:"-", color:"#5B6664" };
 }
-// Overall score: Equal Weight (rata-rata skor antar kategori yang sudah
-// punya data) atau Weighted Score (bobot per kategori, dinormalisasi
-// ulang ke kategori yang punya data saja — sesuai spesifikasi).
+// Overall Performance Score = rata-rata skor (0-100) dari TEST ITEM yang
+// sudah dilakukan & punya scoring standard valid — BUKAN rata-rata semua
+// test yang tersedia. Test yang belum dilakukan diabaikan sepenuhnya dari
+// pembilang MAUPUN penyebut (bukan dianggap 0).
+//   score = total skor test yang valid ÷ jumlah test yang valid
+// "Equal Weight" (default) = rata-rata flat semua test item (sesuai contoh
+// spesifikasi: Push-Up 90, Broad Jump 80, Sit&Reach 70 -> 80).
+// "Weighted Score" = opsi lanjutan: rata-rata dibobot per KATEGORI fisik
+// (dipakai kalau coach sengaja mau menekankan kategori tertentu).
 function perfOverallScore(athleteId){
   const breakdown = perfCategoryBreakdown(athleteId);
-  const withData = breakdown.filter(c=>c.score!=null);
-  const totalTests = breakdown.reduce((s,c)=>s+c.totalTests,0);
-  const totalDone = breakdown.reduce((s,c)=>s+c.doneCount,0);
+  const latest = perfLatestByTest(athleteId);
+  const completedTests = Object.values(latest); // test item valid yang SUDAH dilakukan
+  const eligible = perfEligibleTests(athleteId);
+  const totalTests = eligible.length;
+  const totalDone = completedTests.length;
   const completionPct = totalTests ? Math.round((totalDone/totalTests)*100) : 0;
+
   let overall = null;
-  if(withData.length){
+  if(completedTests.length){
     if(cache.perfScoreSettings.method === "weighted"){
+      const withData = breakdown.filter(c=>c.score!=null);
       const weights = cache.perfScoreSettings.weights || {};
       const weightSum = withData.reduce((s,c)=>s+(Number(weights[c.slug])||0),0);
       overall = weightSum > 0
         ? withData.reduce((s,c)=>s+c.score*(Number(weights[c.slug])||0),0) / weightSum
-        : withData.reduce((s,c)=>s+c.score,0) / withData.length; // fallback kalau semua bobot 0
+        : withData.reduce((s,c)=>s+c.score,0) / withData.length;
     } else {
-      overall = withData.reduce((s,c)=>s+c.score,0) / withData.length;
+      // Equal Weight: rata-rata flat per test item (formula utama spec).
+      overall = completedTests.reduce((s,r)=>s+r.score,0) / completedTests.length;
     }
   }
-  const lastDate = Math.max(0, ...Object.values(perfLatestByTest(athleteId)).map(r=>r.date));
+  const lastDate = completedTests.length ? Math.max(...completedTests.map(r=>r.date)) : null;
   return {
     breakdown, overall: overall!=null ? Math.round(overall*10)/10 : null,
-    totalTests, totalDone, completionPct,
-    lastDate: lastDate>0 ? lastDate : null,
+    totalTests, totalDone, completionPct, completedTests,
+    completionMessage: perfCompletionMessage(totalDone),
+    lastDate,
     classification: perfClassify(overall!=null ? Math.round(overall*10)/10 : null)
   };
+}
+// Spec #9 / #14 — pesan status, TIDAK PERNAH mewajibkan "semua test selesai".
+function perfCompletionMessage(totalDone){
+  if(totalDone === 0) return "Performance Score unavailable — no completed tests.";
+  if(totalDone === 1) return "Performance Score based on 1 test.";
+  return `Performance Score based on ${totalDone} tests.`;
 }
 
 /* ---- UI: Circular Progress Score ---- */
@@ -942,11 +1000,22 @@ function athletePerformanceScoreSection(a){
       <div style="margin-top:10px;">
         <span class="status-pill" style="background:${cls.color};">${cls.label}</span>
       </div>
-      <div class="stat-grid" style="margin-top:16px;">
-        <div class="stat-card"><div class="label">TEST ITEM SELESAI</div><div class="value">${r.totalDone}/${r.totalTests}</div></div>
-        <div class="stat-card"><div class="label">KELENGKAPAN TES</div><div class="value">${r.completionPct}%</div></div>
+      <p style="margin-top:10px;font-weight:700;font-size:12.5px;">${r.completionMessage}</p>
+      <div class="stat-grid" style="margin-top:10px;">
+        <div class="stat-card"><div class="label">TESTS USED</div><div class="value">${r.totalDone}</div></div>
+        <div class="stat-card"><div class="label">KELENGKAPAN (dari test terpilih)</div><div class="value">${r.completionPct}%</div></div>
       </div>
       <p class="helper" style="margin-top:10px;">${r.lastDate ? `Tes terakhir: ${new Date(r.lastDate).toLocaleDateString("id-ID",{day:"2-digit",month:"short",year:"numeric"})}` : "Belum ada hasil tes yang tercatat."} · Metode: <b>${method==='weighted'?'Weighted Score':'Equal Weight'}</b></p>
+      ${r.completedTests.length ? `
+        <div style="text-align:left;margin-top:14px;border-top:1px solid var(--border);padding-top:10px;">
+          <b style="font-size:11.5px;color:var(--muted);text-transform:uppercase;">Tests Used</b>
+          ${r.completedTests.map(res=>{
+            const t = cache.tests.find(x=>x.id===res.testId);
+            return `<div class="history-row"><div class="h-left"><b>✓ ${t?t.name:'(test dihapus)'}</b><span>${Math.round(res.score*10)/10}</span></div></div>`;
+          }).join("")}
+        </div>
+      ` : `<div class="chart-empty" style="margin-top:14px;">Belum ada hasil fitness test.${isStaff()?' <span style="color:var(--turquoise-dark);font-weight:700;cursor:pointer;" onclick="openModal(\'addAssessment\',\''+a.id+'\')">+ Add Test Result</span>':''}</div>`}
+      ${isStaff() ? `<button class="btn ghost small" style="width:auto;margin-top:12px;" onclick="openSelectTestsModal('${a.id}')">⚙️ Select Tests</button>` : ""}
     </div>
 
     ${isStaff() ? `
@@ -1278,6 +1347,61 @@ async function submitPerfClassBands(){
   state.perfEditingBands = false;
   render();
   showToast("Klasifikasi performa tersimpan.");
+}
+
+/* ---- SELECT TESTS (spec #2) — coach pilih test mana yang dipakai untuk
+   Performance Score atlet ini. Default kalau belum pernah disimpan = semua
+   test aktif (perfSelectedTestIds mengembalikan null). ---- */
+let selectTestsDraft = null; // Set(testId) sementara di modal, sebelum disimpan
+function openSelectTestsModal(athleteId){
+  const current = perfSelectedTestIds(athleteId);
+  selectTestsDraft = current ? new Set(current) : new Set(cache.tests.map(t=>t.id));
+  openModal("selectTests", athleteId);
+}
+function modalSelectTests(athleteId){
+  const a = cache.athletes.find(x=>x.id===athleteId);
+  return `
+    <div class="modal-head"><h3>Select Tests — ${a?a.name:''}</h3><button class="close-x" onclick="closeModal()">✕</button></div>
+    <p class="helper">Performance Score atlet ini hanya dihitung dari test yang dicentang di bawah, dan hanya kalau sudah ada hasilnya.</p>
+    <div style="display:flex;gap:8px;margin-bottom:10px;">
+      <button class="btn ghost small" style="width:auto;" onclick="selectTestsSetAll(true)">Select All</button>
+      <button class="btn ghost small" style="width:auto;" onclick="selectTestsSetAll(false)">Deselect All</button>
+    </div>
+    ${PERF_SCORE_CATEGORIES.concat([{slug:null,label:"Lainnya",icon:"🏅"}]).map(cat=>{
+      const catTests = cache.tests.filter(t=> cat.slug===null ? !PERF_SCORE_CATEGORIES.some(c=>c.slug===testCategorySlug(t.id)) : testCategorySlug(t.id)===cat.slug);
+      if(!catTests.length) return "";
+      return `
+        <b style="font-size:11.5px;color:var(--muted);text-transform:uppercase;display:block;margin:10px 0 4px;">${cat.icon} ${cat.label}</b>
+        ${catTests.map(t=>`
+          <label style="display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid var(--border);">
+            <input type="checkbox" ${selectTestsDraft.has(t.id)?'checked':''} onchange="selectTestsToggle('${t.id}', this.checked)"/>
+            <span style="flex:1;">${t.name}</span><span class="helper" style="margin:0;">${t.unit}</span>
+          </label>
+        `).join("")}
+      `;
+    }).join("")}
+    <button class="btn" style="margin-top:14px;" onclick="submitSelectTests('${athleteId}')">Simpan Konfigurasi Test</button>
+  `;
+}
+function selectTestsToggle(testId, checked){ checked ? selectTestsDraft.add(testId) : selectTestsDraft.delete(testId); }
+function selectTestsSetAll(all){
+  selectTestsDraft = all ? new Set(cache.tests.map(t=>t.id)) : new Set();
+  const modalEl = document.querySelector(".modal");
+  if(modalEl) modalEl.innerHTML = modalSelectTests(state.modal.payload);
+}
+async function submitSelectTests(athleteId){
+  if(!sb){ showToast("Tidak terhubung ke database."); return; }
+  await sb.from("athlete_selected_tests").delete().eq("athlete_id", athleteId);
+  const ids = [...selectTestsDraft];
+  if(ids.length){
+    await sb.from("athlete_selected_tests").insert(ids.map(testId=>({ athlete_id: athleteId, test_id: testId })));
+  }
+  // Simpan sebagai Set kosong-vs-null: kalau coach memilih SEMUA test yang
+  // ada, perlakukan sebagai "belum dikonfigurasi" (null) supaya test baru
+  // yang ditambahkan nanti otomatis ikut terhitung juga.
+  cache.athleteSelectedTests[athleteId] = (ids.length === cache.tests.length) ? null : new Set(ids);
+  closeModal(); render();
+  showToast("Konfigurasi test tersimpan.");
 }
 
 /* ==========================================================
@@ -1797,7 +1921,7 @@ let state = {
   tab:"dashboard", modal:null,
   athleteId:null, athleteSection:"overview",
   profileTestId:null, baTestId:null, perfExpandedCat:null, perfEditingBands:false,
-  reportAthleteId:null, reportCompareId:null, reportEvaluationDraft:"",
+  reportAthleteId:null, reportCompareId:null, reportEvaluationDraft:"", testSearchQuery:"",
   bodyView:"front", selectedPart:null,
   photoTarget:null, pendingPhoto:null,
   filters:{ part:"", severity:"", status:"" },
@@ -1873,7 +1997,10 @@ function backFromReport(){ state.tab = "athletes"; render(); }
 function navBtn(key, icon, label){
   return `<button class="${state.tab===key?'active':''}" onclick="setTab('${key}')"><span class="ic">${icon}</span><span>${label}</span></button>`;
 }
-function setTab(t){ state.tab = t; state.athleteId = null; state.mpId = null; render(); }
+function setTab(t){
+  state.tab = t; state.athleteId = null; state.mpId = null; render();
+  if(t==='tests' && isStaff()) refreshAllTestsForManagement().then(render);
+}
 function openModal(name, payload){ state.modal = {name, payload}; render(); }
 function closeModal(){ state.modal = null; render(); }
 function showToast(msg){
@@ -2773,22 +2900,136 @@ function viewTests(){
   `;
 }
 function viewTestCategories(){
-  const tests = loadDB(DB_KEYS.tests);
-  if(tests.length===0) return `<div class="empty"><b>Belum ada kategori tes</b>Tekan tombol + untuk menambah.</div>`;
-  return `
-    <div class="card-list">
-      ${tests.map(t => `
-        <div class="test-card">
-          <div class="test-photo">${t.icon}</div>
-          <div class="test-info">
-            <p class="test-name">${t.name}</p>
-            <p class="test-desc">${t.desc}</p>
-            <p class="test-unit">Satuan: ${t.unit} · ${t.direction==='higher'?'semakin tinggi semakin baik':'semakin rendah semakin baik'}</p>
-          </div>
+  // Staff lihat Test Management penuh (termasuk test nonaktif + jumlah hasil);
+  // non-staff lihat daftar sederhana test aktif saja (read-only).
+  if(!isStaff()){
+    const tests = cache.tests;
+    if(tests.length===0) return `<div class="empty"><b>Belum ada kategori tes</b></div>`;
+    return `<div class="card-list">${tests.map(t => `
+      <div class="test-card">
+        <div class="test-photo">${t.icon}</div>
+        <div class="test-info">
+          <p class="test-name">${t.name}</p><p class="test-desc">${t.desc}</p>
+          <p class="test-unit">Satuan: ${t.unit} · ${t.direction==='higher'?'semakin tinggi semakin baik':'semakin rendah semakin baik'}</p>
         </div>
-      `).join("")}
-    </div>
+      </div>
+    `).join("")}</div>`;
+  }
+
+  const all = cache.allTests.length ? cache.allTests : cache.tests;
+  const q = (state.testSearchQuery||"").toLowerCase();
+  const filtered = q ? all.filter(t=>t.name.toLowerCase().includes(q)) : all;
+  return `
+    <h2 class="page-title" style="margin-bottom:10px;">Test Management</h2>
+    <button class="btn" style="margin-bottom:10px;" onclick="openModal('addTest')">+ Add Test</button>
+    <input type="text" placeholder="Search Test" value="${state.testSearchQuery||''}" oninput="state.testSearchQuery=this.value; render();" style="width:100%;padding:10px 12px;border:1px solid var(--border);border-radius:10px;margin-bottom:12px;font-size:13px;"/>
+    ${filtered.length===0 ? `<div class="empty"><b>Tidak ada test ditemukan</b></div>` : filtered.map(t=>`
+      <div class="chart-card" style="margin-bottom:8px;">
+        <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;">
+          <div>
+            <b style="font-size:13.5px;">${t.icon} ${t.name}</b>
+            <div class="helper" style="margin:2px 0 0;">${t.unit} · ${t.direction==='higher'?'Higher is Better':'Lower is Better'} · ${cache.resultCountsByTest[t.id]||0} results</div>
+          </div>
+          <span class="status-pill" style="background:${t.isActive?'#1D9E75':'#5B6664'};">${t.isActive?'Active':'Disabled'}</span>
+        </div>
+        <div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap;">
+          <button class="btn ghost small" style="width:auto;" onclick="openModal('editTest','${t.id}')">Edit</button>
+          <button class="btn ghost small" style="width:auto;" onclick="toggleTestActive('${t.id}', ${!t.isActive})">${t.isActive?'Disable':'Enable'}</button>
+          <button class="btn danger small" style="width:auto;" onclick="openDeleteTestConfirm('${t.id}')">Delete</button>
+        </div>
+      </div>
+    `).join("")}
   `;
+}
+async function toggleTestActive(testId, newActive){
+  const { error } = await sb.from("tests").update({ is_active: newActive }).eq("id", testId);
+  if(error){ showToast("Gagal: " + error.message); return; }
+  await refreshTests(); await refreshAllTestsForManagement();
+  render();
+  showToast(newActive ? "Test diaktifkan." : "Test dinonaktifkan — tidak akan muncul di input baru / Performance Score default.");
+}
+function openDeleteTestConfirm(testId){ openModal("deleteTestConfirm", testId); }
+function modalDeleteTestConfirm(testId){
+  const t = cache.allTests.find(x=>x.id===testId) || cache.tests.find(x=>x.id===testId);
+  if(!t) return `<div class="modal-head"><h3>Delete Test</h3><button class="close-x" onclick="closeModal()">✕</button></div>`;
+  const standardsCount = cache.scoringProfiles.filter(p=>p.testId===testId).length;
+  const resultsCount = cache.resultCountsByTest[testId] || 0;
+  return `
+    <div class="modal-head"><h3>Delete Test?</h3><button class="close-x" onclick="closeModal()">✕</button></div>
+    <p class="helper">Are you sure you want to delete this test?</p>
+    <div class="info-grid" style="margin:10px 0;">
+      <div class="info-item"><div class="k">Test Name</div><div class="v">${t.name}</div></div>
+      <div class="info-item"><div class="k">Unit</div><div class="v">${t.unit}</div></div>
+      <div class="info-item"><div class="k">Scoring Standards</div><div class="v">${standardsCount}</div></div>
+      <div class="info-item"><div class="k">Athlete Results</div><div class="v">${resultsCount}</div></div>
+    </div>
+    ${resultsCount>0 ? `
+      <div class="field" style="background:var(--turquoise-tint);border-radius:10px;padding:10px 12px;">
+        <b style="font-size:12px;">⚠ This test has existing athlete results.</b>
+        <p class="helper" style="margin:4px 0 0;">Pilih salah satu di bawah. Hasil atlet TIDAK akan terhapus kecuali kamu pilih opsi kedua secara eksplisit.</p>
+      </div>
+      <button class="btn" style="margin-top:12px;" onclick="confirmDeleteTest('${testId}', false)">Delete Test Only (simpan histori atlet)</button>
+      <button class="btn danger" style="margin-top:8px;" onclick="confirmDeleteTest('${testId}', true)">Delete Test + All Related Results</button>
+      <button class="btn ghost" style="margin-top:8px;" onclick="closeModal()">Cancel</button>
+    ` : `
+      <button class="btn danger" style="margin-top:8px;" onclick="confirmDeleteTest('${testId}', false)">Delete Test</button>
+      <button class="btn ghost" style="margin-top:8px;" onclick="closeModal()">Cancel</button>
+    `}
+  `;
+}
+async function confirmDeleteTest(testId, deleteResultsToo){
+  if(deleteResultsToo){
+    await sb.from("performance_results").delete().eq("test_id", testId);
+  }
+  // Kalau "Delete Test Only": tidak menyentuh performance_results sama
+  // sekali. FK test_id -> ON DELETE SET NULL (lihat supabase.sql), dan
+  // test_name_snapshot/test_unit_snapshot sudah tersimpan di tiap baris
+  // saat insert, jadi histori tetap terbaca walau test induknya hilang.
+  const { error } = await sb.from("tests").delete().eq("id", testId);
+  if(error){ showToast("Gagal menghapus: " + error.message); return; }
+  await refreshTests(); await refreshAllTestsForManagement(); await refreshAssessments();
+  closeModal(); render();
+  showToast("Test dihapus.");
+}
+function modalEditTest(testId){
+  const t = (cache.allTests.length?cache.allTests:cache.tests).find(x=>x.id===testId);
+  if(!t) return `<div class="modal-head"><h3>Edit Test</h3><button class="close-x" onclick="closeModal()">✕</button></div>`;
+  return `
+    <div class="modal-head"><h3>Edit Test</h3><button class="close-x" onclick="closeModal()">✕</button></div>
+    <div class="field"><label>Nama tes</label><input id="f-name" value="${t.name}"/></div>
+    <div class="field"><label>Kategori</label>
+      <select id="f-category">${cache.testCategories.map(c => `<option value="${c.id}" ${c.id===t.categoryId?'selected':''}>${c.icon} ${c.name}</option>`).join("")}</select>
+    </div>
+    <div class="field-row">
+      <div class="field"><label>Satuan</label><input id="f-unit" value="${t.unit}"/></div>
+      <div class="field"><label>Arah skor lebih baik</label>
+        <select id="f-direction">
+          <option value="higher" ${t.direction==='higher'?'selected':''}>Makin tinggi makin baik</option>
+          <option value="lower" ${t.direction==='lower'?'selected':''}>Makin rendah makin baik</option>
+        </select>
+      </div>
+    </div>
+    <div class="field"><label>Deskripsi singkat</label><input id="f-desc" value="${t.desc||''}"/></div>
+    <p class="helper">Standar skor (Min/Max/Score per kategori) diatur terpisah lewat Admin Panel → Standar Skor.</p>
+    <div id="f-err" class="err" style="display:none;"></div>
+    <button class="btn" onclick="submitEditTest('${testId}')">Simpan Perubahan</button>
+  `;
+}
+async function submitEditTest(testId){
+  const name = document.getElementById("f-name").value.trim();
+  const categoryId = document.getElementById("f-category").value;
+  const unit = document.getElementById("f-unit").value.trim();
+  const direction = document.getElementById("f-direction").value;
+  const desc = document.getElementById("f-desc").value.trim();
+  const errBox = document.getElementById("f-err");
+  if(!name || !unit){ errBox.style.display="block"; errBox.textContent="Lengkapi nama dan satuan tes."; return; }
+  const { error } = await sb.from("tests").update({
+    category_id: categoryId, name, unit, higher_is_better: direction === "higher", description: desc
+  }).eq("id", testId);
+  if(error){ errBox.style.display="block"; errBox.textContent="Gagal menyimpan: " + error.message; return; }
+  await refreshTests(); await refreshAllTestsForManagement();
+  closeModal(); render();
+  showToast("Test diperbarui.");
 }
 function modalAddTest(){
   return `
@@ -2831,7 +3072,7 @@ async function submitAddTest(){
     higher_is_better: direction === "higher", description: desc
   }).select().single();
   if(error){ errBox.style.display="block"; errBox.textContent="Gagal menyimpan: " + error.message; return; }
-  await refreshTests();
+  await refreshTests(); await refreshAllTestsForManagement();
   closeModal(); setTab("tests");
   showToast("Kategori tes tersimpan");
 }
@@ -2998,7 +3239,12 @@ function viewAthleteList(){
 }
 function openAthlete(id){ state.tab="athletes"; state.athleteId=id; state.athleteSection="overview"; state.selectedPart=null; render(); }
 function backToAthleteList(){ state.athleteId=null; render(); }
-function setAthleteSection(s){ state.athleteSection=s; state.selectedPart=null; render(); }
+function setAthleteSection(s){
+  state.athleteSection=s; state.selectedPart=null; render();
+  if(s==='score' && state.athleteId && !(state.athleteId in cache.athleteSelectedTests)){
+    refreshAthleteSelectedTests(state.athleteId).then(render);
+  }
+}
 
 function modalAddAthlete(){
   return `
@@ -6130,6 +6376,9 @@ function renderModal(){
   if(state.modal.name==="importScoringStandards") modal.innerHTML = modalImportScoringStandards();
   if(state.modal.name==="editDailyPlan") modal.innerHTML = modalEditDailyPlan(state.modal.payload);
   if(state.modal.name==="duplicateProgram") modal.innerHTML = modalDuplicateProgram(state.modal.payload);
+  if(state.modal.name==="selectTests") modal.innerHTML = modalSelectTests(state.modal.payload);
+  if(state.modal.name==="deleteTestConfirm") modal.innerHTML = modalDeleteTestConfirm(state.modal.payload);
+  if(state.modal.name==="editTest") modal.innerHTML = modalEditTest(state.modal.payload);
   if(state.modal.name==="compareReportPick") modal.innerHTML = modalCompareReportPick(state.modal.payload);
   if(state.modal.name==="completeSession") modal.innerHTML = modalCompleteSession(state.modal.payload);
   if(state.modal.name==="backup") modal.innerHTML = modalBackup();
