@@ -378,6 +378,7 @@ let cache = { athletes:[], tests:[], assessments:[], injuries:[], testCategories
   allTests: [], // semua test (aktif + nonaktif) untuk halaman Test Management; cache.tests tetap hanya yang aktif
   athleteSelectedTests: {}, // { [athleteId]: Set(testId) | null }  null = belum dikonfigurasi -> pakai semua test aktif
   resultCountsByTest: {}, // { [testId]: jumlah performance_results } untuk Test Management & safe-delete
+  masResults: {}, // { [athleteId]: [ {id, masMs, mhrBpm, date, notes}, ... ] } riwayat tes MAS, terbaru dulu
   perfClassBands: [
     { id:null, label:"Elite", minScore:90, color:"#1D9E75" },
     { id:null, label:"Advanced", minScore:80, color:"#159A94" },
@@ -705,6 +706,13 @@ async function refreshAthleteSelectedTests(athleteId){
 function perfSelectedTestIds(athleteId){
   return cache.athleteSelectedTests[athleteId] || null;
 }
+async function refreshMasResults(athleteId){
+  if(!sb) return;
+  const { data, error } = await sb.from("mas_results").select("*").eq("athlete_id", athleteId).order("test_date",{ascending:false});
+  if(error){ cache.masResults[athleteId] = []; return; }
+  cache.masResults[athleteId] = (data||[]).map(r=>({ id:r.id, masMs:Number(r.mas_ms), mhrBpm:r.mhr_bpm!=null?Number(r.mhr_bpm):null, date:r.test_date, notes:r.notes||"" }));
+}
+
 async function refreshPerfScoreSettings(){
   if(!sb) return;
   const { data, error } = await sb.from("performance_score_settings").select("*").eq("id",1).maybeSingle();
@@ -1405,6 +1413,177 @@ async function submitSelectTests(athleteId){
 }
 
 /* ==========================================================
+   MAXIMAL AEROBIC SPEED (MAS)
+   Calculate. Perform. Improve.
+========================================================== */
+const MAS_ZONES_DEF = [
+  { key:"z1", label:"ZONE 1", pct:"60–70% MAS", lo:0.60, hi:0.70 },
+  { key:"z2", label:"ZONE 2", pct:"70–80% MAS", lo:0.70, hi:0.80 },
+  { key:"z3", label:"ZONE 3", pct:"80–90% MAS", lo:0.80, hi:0.90 },
+  { key:"z4", label:"ZONE 4", pct:"90–100% MAS", lo:0.90, hi:1.00 }
+];
+// Pace (detik/km) = 1000 / speed(m/s) -> format menit:detik, dibulatkan
+// hanya untuk TAMPILAN (nilai speed internal tidak dibulatkan).
+function masFmtPace(speedMs){
+  if(!speedMs || speedMs<=0) return "–";
+  const totalSec = 1000 / speedMs;
+  const min = Math.floor(totalSec/60);
+  const sec = Math.round(totalSec%60);
+  return `${min}:${sec<10?'0':''}${sec}`;
+}
+function masCalcZones(masMs, mhrBpm){
+  return MAS_ZONES_DEF.map(z=>{
+    const speedLo = masMs*z.lo, speedHi = masMs*z.hi;
+    return {
+      ...z,
+      speedLo, speedHi,
+      kmhLo: speedLo*3.6, kmhHi: speedHi*3.6,
+      // Pace berbanding terbalik dgn speed: speed tertinggi -> pace tercepat
+      // (angka waktu terkecil, ditampilkan sebagai batas bawah rentang).
+      paceFast: masFmtPace(speedHi),
+      paceSlow: masFmtPace(speedLo),
+      hrLo: mhrBpm ? Math.round(mhrBpm*z.lo) : null,
+      hrHi: mhrBpm ? Math.round(mhrBpm*z.hi) : null
+    };
+  });
+}
+function athleteMASSection(a){
+  const inp = state.masInput;
+  const r = state.masResult;
+  const history = cache.masResults[a.id] || [];
+  return `
+    <div class="chart-card" style="text-align:center;">
+      <h2 class="page-title" style="margin-bottom:2px;">MAXIMAL AEROBIC SPEED</h2>
+      <p class="helper" style="font-style:italic;margin-top:0;">Calculate. Perform. Improve.</p>
+    </div>
+
+    <div class="chart-card no-print">
+      <h3>Input Data Atlet</h3>
+      <div class="field"><label>Nama Atlet</label><input value="${a.name}" disabled style="background:var(--bg-soft,#F4F6F5);"/></div>
+      <div class="field-row">
+        <div class="field"><label>Maximal Aerobic Speed — MAS (m/s)</label>
+          <input type="number" min="0" step="0.01" placeholder="cth. 4.20" value="${inp.mas}" oninput="state.masInput.mas=this.value"/>
+        </div>
+        <div class="field"><label>Maximal Heart Rate — MHR (bpm)</label>
+          <input type="number" min="0" step="1" placeholder="cth. 195" value="${inp.mhr}" oninput="state.masInput.mhr=this.value"/>
+        </div>
+      </div>
+      <div id="mas-err" class="err" style="display:none;"></div>
+      <div style="display:flex;gap:10px;margin-top:10px;">
+        <button class="btn" style="flex:1;" onclick="calculateMAS('${a.id}')">Calculate MAS</button>
+        <button class="btn ghost" style="flex:1;" onclick="resetMAS()">Reset</button>
+      </div>
+    </div>
+
+    ${!r ? `
+      <div class="chart-empty" style="margin-top:14px;">Enter athlete MAS result to calculate training zones.</div>
+    ` : `
+      <div id="mas-report">
+        <div class="chart-card">
+          <h3>Ringkasan Hasil Atlet</h3>
+          <div class="info-grid">
+            <div class="info-item"><div class="k">Athlete Name</div><div class="v">${a.name}</div></div>
+            <div class="info-item"><div class="k">MAS (m/s)</div><div class="v">${r.masMs.toFixed(2)}</div></div>
+            <div class="info-item"><div class="k">MAS (km/h)</div><div class="v">${(r.masMs*3.6).toFixed(2)}</div></div>
+            <div class="info-item"><div class="k">MAS Pace (min/km)</div><div class="v">${masFmtPace(r.masMs)}</div></div>
+            <div class="info-item"><div class="k">Maximal Heart Rate</div><div class="v">${r.mhrBpm?r.mhrBpm+' bpm':'–'}</div></div>
+          </div>
+        </div>
+
+        <h3 class="page-title" style="font-size:14px;margin:16px 0 10px;">Zona Intensitas MAS</h3>
+        ${r.zones.map(z=>`
+          <div class="chart-card" style="margin-bottom:10px;">
+            <div style="display:flex;justify-content:space-between;align-items:center;">
+              <b style="font-size:13px;">${z.label}</b><span class="status-pill" style="background:#159A94;">${z.pct}</span>
+            </div>
+            <div class="info-grid" style="margin-top:10px;">
+              <div class="info-item"><div class="k">Speed (m/s)</div><div class="v" style="font-size:13px;">${z.speedLo.toFixed(2)} – ${z.speedHi.toFixed(2)}</div></div>
+              <div class="info-item"><div class="k">Speed (km/h)</div><div class="v" style="font-size:13px;">${z.kmhLo.toFixed(2)} – ${z.kmhHi.toFixed(2)}</div></div>
+              <div class="info-item"><div class="k">Pace (min/km)</div><div class="v" style="font-size:13px;">${z.paceFast} – ${z.paceSlow}</div></div>
+              <div class="info-item"><div class="k">Target HR (bpm)</div><div class="v" style="font-size:13px;">${z.hrLo?`${z.hrLo} – ${z.hrHi}`:'–'}</div></div>
+            </div>
+          </div>
+        `).join("")}
+        <p class="helper">Target HR dihitung dari persentase yang sama dengan zona MAS, sekadar estimasi — persentase HR tidak selalu identik dengan persentase MAS.</p>
+
+        <div class="chart-card">
+          <h3>Visualisasi Zona (m/s)</h3>
+          <canvas id="chart-mas-zones" height="200"></canvas>
+        </div>
+
+        <div class="no-print" style="display:flex;gap:8px;margin:14px 0;flex-wrap:wrap;">
+          <button class="btn secondary small" style="width:auto;" onclick="window.print()">🖨 Export PDF</button>
+          ${isStaff() ? `<button class="btn small" style="width:auto;" onclick="saveMASResult('${a.id}')">💾 Save Athlete Result</button>` : ""}
+        </div>
+      </div>
+    `}
+
+    ${history.length ? `
+      <h3 class="page-title no-print" style="font-size:14px;margin:16px 0 10px;">Riwayat Tes MAS</h3>
+      <div class="chart-card no-print">
+        ${history.map(h=>`
+          <div class="history-row">
+            <div class="h-left"><b>${h.masMs.toFixed(2)} m/s (${(h.masMs*3.6).toFixed(2)} km/h)</b><span>${new Date(h.date).toLocaleDateString("id-ID",{day:"2-digit",month:"short",year:"numeric"})}${h.mhrBpm?` · MHR ${h.mhrBpm} bpm`:''}</span></div>
+          </div>
+        `).join("")}
+      </div>
+    ` : ""}
+  `;
+}
+function calculateMAS(athleteId){
+  const errBox = document.getElementById("mas-err");
+  const masMs = Number(state.masInput.mas);
+  const mhrBpm = state.masInput.mhr ? Number(state.masInput.mhr) : null;
+  if(!masMs || masMs <= 0){
+    errBox.style.display="block"; errBox.textContent = "MAS harus lebih besar dari 0.";
+    return;
+  }
+  errBox.style.display="none";
+  state.masResult = { masMs, mhrBpm, zones: masCalcZones(masMs, mhrBpm) };
+  render();
+  drawMASChart();
+}
+function resetMAS(){
+  state.masInput = { mas:"", mhr:"" };
+  state.masResult = null;
+  render();
+}
+async function saveMASResult(athleteId){
+  if(!state.masResult) return;
+  const { error } = await sb.from("mas_results").insert({
+    athlete_id: athleteId, mas_ms: state.masResult.masMs, mhr_bpm: state.masResult.mhrBpm, test_date: new Date().toISOString().slice(0,10)
+  });
+  if(error){ showToast("Gagal menyimpan: " + error.message); return; }
+  await refreshMasResults(athleteId);
+  render();
+  showToast("Hasil MAS tersimpan ke profil atlet.");
+}
+function drawMASChart(){
+  destroyChart("chart-mas-zones");
+  const el = document.getElementById("chart-mas-zones");
+  if(!el || !state.masResult) return;
+  const zones = state.masResult.zones;
+  chartInstances["chart-mas-zones"] = new Chart(el, {
+    type:"bar",
+    data:{
+      labels: zones.map(z=>`${z.label} (${z.pct})`),
+      datasets:[{ label:"Speed range (m/s)", data: zones.map(z=>[z.speedLo, z.speedHi]), backgroundColor:"#20B2AA", borderRadius:6 }]
+    },
+    options:{
+      indexAxis:"y", responsive:true,
+      plugins:{
+        legend:{display:false},
+        tooltip:{ callbacks:{ label:(ctx)=>{
+          const z = zones[ctx.dataIndex];
+          return [`${z.speedLo.toFixed(2)}–${z.speedHi.toFixed(2)} m/s`, `${z.kmhLo.toFixed(2)}–${z.kmhHi.toFixed(2)} km/h`, `Pace ${z.paceFast}–${z.paceSlow} min/km`];
+        }}}
+      },
+      scales:{ x:{ title:{display:true,text:"m/s"}, ticks:{font:{size:9}} }, y:{ ticks:{font:{size:10}} } }
+    }
+  });
+}
+
+/* ==========================================================
    AUTOMATIC PERFORMANCE REPORT (spec #8)
 ========================================================== */
 function viewPerformanceReport(){
@@ -1922,6 +2101,7 @@ let state = {
   athleteId:null, athleteSection:"overview",
   profileTestId:null, baTestId:null, perfExpandedCat:null, perfEditingBands:false,
   reportAthleteId:null, reportCompareId:null, reportEvaluationDraft:"", testSearchQuery:"",
+  masInput:{ mas:"", mhr:"" }, masResult:null,
   bodyView:"front", selectedPart:null,
   photoTarget:null, pendingPhoto:null,
   filters:{ part:"", severity:"", status:"" },
@@ -2026,6 +2206,7 @@ function renderMain(){
   if(state.tab === "report" && state.reportAthleteId && !state.reportCompareId) drawPerfScoreCharts(state.reportAthleteId);
   if(state.tab === "athletes" && state.athleteId){
     if(state.athleteSection === "score") drawPerfScoreCharts(state.athleteId);
+    if(state.athleteSection === "mas" && state.masResult) drawMASChart();
     if(state.athleteSection === "performance") { drawProfileChart(); drawScoreTrendChart(); }
     if(state.athleteSection === "improvement") drawImprovementChart();
     if(state.athleteSection === "readiness") drawReadinessChart();
@@ -3244,6 +3425,10 @@ function setAthleteSection(s){
   if(s==='score' && state.athleteId && !(state.athleteId in cache.athleteSelectedTests)){
     refreshAthleteSelectedTests(state.athleteId).then(render);
   }
+  if(s==='mas' && state.athleteId){
+    state.masInput = { mas:"", mhr:"" }; state.masResult = null;
+    if(!(state.athleteId in cache.masResults)) refreshMasResults(state.athleteId).then(render);
+  }
 }
 
 function modalAddAthlete(){
@@ -3493,6 +3678,7 @@ function viewAthleteDetail(){
     <div class="section-tabs">
       <button class="${state.athleteSection==='overview'?'active':''}" onclick="setAthleteSection('overview')">Ringkasan</button>
       <button class="${state.athleteSection==='score'?'active':''}" onclick="setAthleteSection('score')">Performance Score</button>
+      <button class="${state.athleteSection==='mas'?'active':''}" onclick="setAthleteSection('mas')">MAS</button>
       <button class="${state.athleteSection==='readiness'?'active':''}" onclick="setAthleteSection('readiness')">Readiness</button>
       <button class="${state.athleteSection==='load'?'active':''}" onclick="setAthleteSection('load')">Training Load</button>
       <button class="${state.athleteSection==='goals'?'active':''}" onclick="setAthleteSection('goals')">Goals</button>
@@ -3508,6 +3694,7 @@ function viewAthleteDetail(){
     <div id="athlete-section-body">
       ${state.athleteSection==='overview' ? athleteOverview(a) : ""}
       ${state.athleteSection==='score' ? athletePerformanceScoreSection(a) : ""}
+      ${state.athleteSection==='mas' ? athleteMASSection(a) : ""}
       ${state.athleteSection==='readiness' ? athleteReadinessSection(a) : ""}
       ${state.athleteSection==='load' ? athleteLoadSection(a) : ""}
       ${state.athleteSection==='goals' ? athleteGoalsSection(a) : ""}
