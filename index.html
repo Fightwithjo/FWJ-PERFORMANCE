@@ -121,6 +121,9 @@
   h2.page-title{font-size:14px;font-weight:700;margin:0 0 12px;text-transform:uppercase;letter-spacing:0.02em;color:var(--muted);}
 
   .stat-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:20px;}
+  .ex-grid{display:grid;grid-template-columns:1fr;gap:10px;margin-bottom:10px;}
+  .ex-card{margin-bottom:0;transition:border-color .2s,transform .2s;}
+  .ex-card:hover{border-color:var(--turquoise);}
   .stat-card{background:var(--card);border:1px solid var(--border);border-radius:var(--radius);padding:14px;box-shadow:var(--shadow-sm);transition:border-color 150ms ease,transform 150ms ease;}
   .stat-card .label{font-size:11px;color:var(--muted);margin-bottom:6px;letter-spacing:0.02em;}
   .stat-card .value{font-size:24px;font-weight:700;color:var(--text);}
@@ -470,9 +473,11 @@
     .stat-grid{grid-template-columns:repeat(auto-fit,minmax(190px,1fr));}
     .before-after{grid-template-columns:repeat(3,minmax(140px,1fr));}
     .field-row{grid-template-columns:repeat(auto-fit,minmax(200px,1fr));}
+    .ex-grid{grid-template-columns:repeat(2,1fr);}
   }
   @media (min-width:1200px){
     .stat-grid{grid-template-columns:repeat(auto-fit,minmax(210px,1fr));}
+    .ex-grid{grid-template-columns:repeat(3,1fr);}
   }
 </style>
 </head>
@@ -599,6 +604,8 @@ if(window.matchMedia){
 const DB_KEYS = { athletes:"athletes", tests:"tests", assessments:"assessments", injuries:"injuries", readiness:"readiness", loads:"loads", goals:"goals", batteries:"batteries", batterySessions:"batterySessions", rehabLogs:"rehabLogs", asymmetry:"asymmetry", notes:"notes", competitions:"competitions", competitionResults:"competitionResults", masterplans:"masterplans", scoringProfiles:"scoringProfiles", scoringRanges:"scoringRanges" };
 
 let cache = { athletes:[], tests:[], assessments:[], injuries:[], testCategories:[], bodyParts:[], profile:null, readiness:[], loads:[], goals:[], batteries:[], batterySessions:[], rehabLogs:[], asymmetry:[], notes:[], competitions:[], competitionResults:[], masterplans:[], scoringProfiles:[], scoringRanges:[],
+  strengthLibrary: [], // katalog Strength Exercise Library (tabel strength_exercise_library)
+  aerobicLibrary: [],  // katalog Aerobic Exercise Library (tabel aerobic_exercise_library)
   perfScoreSettings: { method:"equal", weights:{ strength:25, power:20, speed:20, agility:15, endurance:15, "flexibility-mobility":5 } },
   allTests: [], // semua test (aktif + nonaktif) untuk halaman Test Management; cache.tests tetap hanya yang aktif
   athleteSelectedTests: {}, // { [athleteId]: Set(testId) | null }  null = belum dikonfigurasi -> pakai semua test aktif
@@ -705,10 +712,29 @@ function mapTrainingLoadRow(t){
     };
   });
   const volumeLoad = strengthData.reduce((s,x)=>s+x.volumeLoad,0);
+  let rawAerobic = [];
+  if(t.aerobic_data){
+    try{ rawAerobic = Array.isArray(t.aerobic_data) ? t.aerobic_data : JSON.parse(t.aerobic_data); }catch(e){ rawAerobic = []; }
+  }
+  const aerobicData = (rawAerobic||[]).map(x=>({
+    exercise: x.exercise || "", objective: x.objective || "", modality: x.modality || "",
+    plannedDuration: x.plannedDuration!=null ? Number(x.plannedDuration) : null,
+    distance: x.distance || null,
+    sets: x.sets!=null ? Number(x.sets) : null,
+    workSec: x.workSec!=null ? Number(x.workSec) : null,
+    restSec: x.restSec!=null ? Number(x.restSec) : null,
+    intensityMethod: x.intensityMethod || null,
+    intensityMin: x.intensityMin!=null ? Number(x.intensityMin) : null,
+    intensityMax: x.intensityMax!=null ? Number(x.intensityMax) : null,
+    targetHR: x.targetHR || null, targetPace: x.targetPace || null,
+    masPct: x.masPct!=null ? Number(x.masPct) : null,
+    rpeTarget: x.rpeTarget!=null ? Number(x.rpeTarget) : null,
+    notes: x.notes || null
+  }));
   return {
     id: t.id, athleteId: t.athlete_id, date: new Date(t.session_date).getTime(),
     sessionType: t.session_type, trainingType: t.session_type, duration, rpe, load,
-    notes: t.notes || "", strengthData, volumeLoad,
+    notes: t.notes || "", strengthData, volumeLoad, aerobicData,
     category: trainingCategory(t.session_type)
   };
 }
@@ -898,6 +924,19 @@ async function refreshCompetitionResults(){
   cache.competitionResults = (data||[]).map(mapCompetitionResultRow);
 }
 
+async function refreshStrengthLibrary(){
+  if(!sb) return;
+  const { data, error } = await sb.from("strength_exercise_library").select("*").order("category").order("name");
+  if(error){ console.warn("Gagal memuat Strength Exercise Library (cek migration strength_exercise_library):", error.message); return; }
+  cache.strengthLibrary = data || [];
+}
+async function refreshAerobicLibrary(){
+  if(!sb) return;
+  const { data, error } = await sb.from("aerobic_exercise_library").select("*").order("category").order("exercise_name");
+  if(error){ console.warn("Gagal memuat Aerobic Exercise Library (cek migration aerobic_exercise_library):", error.message); return; }
+  cache.aerobicLibrary = data || [];
+}
+
 async function refreshMasterplans(){
   if(!sb) return;
   const { data, error } = await sb.from("training_masterplans").select("*").order("created_at",{ascending:false});
@@ -975,6 +1014,8 @@ async function refreshAll(){
   await refreshCompetitions();
   await refreshCompetitionResults();
   await refreshMasterplans();
+  await refreshStrengthLibrary();
+  await refreshAerobicLibrary();
   await refreshPerfScoreSettings();
   await refreshPerfClassBands();
 }
@@ -2025,6 +2066,406 @@ const RPE_SCALE = {0:"Rest",1:"Very Easy",2:"Easy",3:"Light",4:"Moderate",5:"Som
 function trainingCategory(type){ const t = TRAINING_TYPES.find(x=>x.value===type); return t ? t.group : "OTHER"; }
 function isStrengthCategory(type){ return trainingCategory(type)==="STRENGTH"; }
 
+/* ==========================================================
+   STRENGTH EXERCISE LIBRARY & AEROBIC EXERCISE LIBRARY
+   Dua katalog terpisah (tabel strength_exercise_library &
+   aerobic_exercise_library) tetapi memakai SATU alur pemrograman
+   latihan & pencatatan Training Load yang sudah ada: hasil pilihan
+   dari sini hanya mengisi field exercise/sets/reps/load dsb pada
+   struktur sesi (tlDraft.rows / tlDraft.aerobicRows) dan Daily
+   Training Planner (dpDraft blocks.exercises) yang sudah ada —
+   tidak ada tabel sesi/program baru yang terpisah.
+========================================================== */
+const STRENGTH_CATEGORIES = ["Squat","Hinge","Unilateral Lower Body","Horizontal Push","Vertical Push",
+  "Horizontal Pull","Vertical Pull","Core Stability","Rotational Strength","Isometric Strength",
+  "Power / Explosive Strength","Olympic Lifting","Bodyweight Strength","Functional Training"];
+const STRENGTH_EQUIPMENT = ["Barbell","Dumbbell","Kettlebell","Cable","Machine","Resistance Band","TRX","Medicine Ball","Bodyweight","Box","Sled"];
+const MOVEMENT_PATTERNS = ["Squat","Hinge","Lunge","Push","Pull","Carry","Rotation","Core"];
+const TRAINING_GOALS = ["Max Strength","Strength Endurance","Hypertrophy","Power","Stability","Functional Strength"];
+const EXERCISE_LEVELS = ["Beginner","Intermediate","Advanced"];
+
+const AEROBIC_CATEGORIES_FLAT = ["Continuous Training","Aerobic Interval Training","Tempo and Threshold Training",
+  "Maximal Aerobic Speed (MAS) Training","Low-Impact Aerobic Training","Aerobic Conditioning for Combat Sports"];
+const AEROBIC_EQUIPMENT = ["Treadmill","Track","Outdoor","Bike","Rower","Assault Bike","Skipping","Swimming","Bodyweight","Heavy Bag","Machine","Mixed"];
+const AEROBIC_OBJECTIVES = ["Aerobic Base","Aerobic Endurance","Threshold","MAS","Recovery","Combat-Sport Conditioning"];
+const INTENSITY_METHODS = [
+  {value:"MHR", label:"Percentage of MHR"},
+  {value:"HRR", label:"Heart Rate Reserve (HRR)"},
+  {value:"MAS", label:"Percentage of MAS"},
+  {value:"PACE", label:"Pace/Speed Target"},
+  {value:"RPE", label:"RPE"}
+];
+
+/* ---- Favorit & Recently Used (disimpan di profiles, sinkron lintas device) ---- */
+function favIdsKey(kind){ return kind==="strength" ? "fav_strength_ids" : "fav_aerobic_ids"; }
+function recentIdsKey(kind){ return kind==="strength" ? "recent_strength_ids" : "recent_aerobic_ids"; }
+function isFavoriteExercise(kind, id){
+  const p = cache.profile; if(!p) return false;
+  const ids = p[favIdsKey(kind)];
+  return Array.isArray(ids) && ids.includes(id);
+}
+async function toggleFavoriteExercise(kind, id){
+  const p = cache.profile; if(!p) return;
+  const key = favIdsKey(kind);
+  let ids = Array.isArray(p[key]) ? p[key].slice() : [];
+  ids = ids.includes(id) ? ids.filter(x=>x!==id) : [...ids, id];
+  p[key] = ids;
+  render();
+  if(sb) await sb.from("profiles").update({ [key]: ids }).eq("id", p.id);
+}
+async function pushRecentExercise(kind, id){
+  const p = cache.profile; if(!p) return;
+  const key = recentIdsKey(kind);
+  let ids = Array.isArray(p[key]) ? p[key].slice() : [];
+  ids = [id, ...ids.filter(x=>x!==id)].slice(0,12);
+  p[key] = ids;
+  if(sb) await sb.from("profiles").update({ [key]: ids }).eq("id", p.id);
+}
+
+/* ---- Helper nama/field netral kind ('strength'|'aerobic') ---- */
+function exName(kind, item){ return kind==="strength" ? (item.name||"") : (item.exercise_name||""); }
+function exPickerLibrary(){ return exPicker.kind==="strength" ? cache.strengthLibrary : cache.aerobicLibrary; }
+function exPickerCategoryList(){ return exPicker.kind==="strength" ? STRENGTH_CATEGORIES : AEROBIC_CATEGORIES_FLAT; }
+function exPickerEquipmentList(){ return exPicker.kind==="strength" ? STRENGTH_EQUIPMENT : AEROBIC_EQUIPMENT; }
+
+/* ---- Modal: Exercise Picker (generik untuk strength & aerobic) ---- */
+let exPicker = null; // { kind, search, category, equipment, level, tab }
+let exPickerOnSelect = null; // function(libraryItem)
+function openExercisePicker(kind, onSelect){
+  exPicker = { kind, search:"", category:"", equipment:"", level:"", tab:"all" };
+  exPickerOnSelect = onSelect;
+  openModal("exercisePicker", kind);
+}
+function exPickerFiltered(){
+  const kind = exPicker.kind;
+  let list = exPickerLibrary().slice();
+  if(exPicker.tab==="favorite"){
+    const ids = (cache.profile && cache.profile[favIdsKey(kind)]) || [];
+    list = list.filter(x=>ids.includes(x.id));
+  } else if(exPicker.tab==="recent"){
+    const ids = (cache.profile && cache.profile[recentIdsKey(kind)]) || [];
+    list = ids.map(id=>list.find(x=>x.id===id)).filter(Boolean);
+  }
+  if(exPicker.category) list = list.filter(x=>x.category===exPicker.category);
+  if(exPicker.equipment) list = list.filter(x=>(x.equipment||"")===exPicker.equipment);
+  if(exPicker.level) list = list.filter(x=>(x.difficulty||"")===exPicker.level);
+  if(exPicker.search){
+    const s = exPicker.search.toLowerCase();
+    list = list.filter(x=>exName(kind,x).toLowerCase().includes(s));
+  }
+  if(exPicker.tab!=="recent") list = list.sort((a,b)=>exName(kind,a).localeCompare(exName(kind,b)));
+  return list;
+}
+function exerciseCard(kind, item, onSelectAttr){
+  const fav = isFavoriteExercise(kind, item.id);
+  const name = exName(kind, item);
+  const isCustom = kind==="strength" ? item.is_default===false : item.is_custom===true;
+  const sub = kind==="strength"
+    ? [item.movement_pattern, item.equipment, item.difficulty].filter(Boolean).join(" · ")
+    : [item.training_objective, item.modality, item.equipment].filter(Boolean).join(" · ");
+  return `
+    <div class="chart-card ex-card">
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;">
+        <div>
+          <b style="font-size:14px;">${name}</b>
+          <p class="helper" style="margin:2px 0 0;">${item.category || ""}${sub?` · ${sub}`:""}</p>
+        </div>
+        <span style="cursor:pointer;font-size:17px;flex-shrink:0;" onclick="toggleFavoriteExercise('${kind}','${item.id}')" title="Favorit">${fav?'⭐':'☆'}</span>
+      </div>
+      ${item.target_muscles ? `<p class="helper" style="margin:6px 0 0;">${item.target_muscles}</p>` : ""}
+      ${item.description ? `<p class="helper" style="margin:4px 0 0;">${item.description}</p>` : ""}
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-top:10px;gap:8px;">
+        <span class="badge" style="background:${isCustom?'var(--muted)':'var(--turquoise-dark)'};">${isCustom?'Custom':'Default'}</span>
+        <button class="btn" style="width:auto;padding:7px 16px;" onclick="${onSelectAttr}">Select</button>
+      </div>
+    </div>
+  `;
+}
+function selectExercise(id){
+  const item = exPickerLibrary().find(x=>x.id===id); if(!item) return;
+  pushRecentExercise(exPicker.kind, id);
+  const cb = exPickerOnSelect;
+  exPickerOnSelect = null;
+  if(cb) cb(item);
+}
+function modalExercisePicker(kind){
+  const list = exPickerFiltered();
+  const catList = exPickerCategoryList();
+  const eqList = exPickerEquipmentList();
+  return `
+    <div class="modal-head"><h3>${kind==="strength"?"Strength Exercise Library":"Aerobic Exercise Library"}</h3><button class="close-x" onclick="closeModal()">${icon('close',18)}</button></div>
+    <input type="text" placeholder="Cari nama latihan..." value="${exPicker.search}" oninput="exPicker.search=this.value; render();" style="width:100%;padding:10px 12px;border:1px solid var(--border);border-radius:10px;margin-bottom:10px;font-size:13px;"/>
+    <div class="section-tabs">
+      <button class="${exPicker.tab==='all'?'active':''}" onclick="exPicker.tab='all'; render();">All Exercises</button>
+      <button class="${exPicker.tab==='favorite'?'active':''}" onclick="exPicker.tab='favorite'; render();">⭐ Favorit</button>
+      <button class="${exPicker.tab==='recent'?'active':''}" onclick="exPicker.tab='recent'; render();">🕑 Recently Used</button>
+    </div>
+    <div class="field-row">
+      <div class="field"><label>Kategori</label>
+        <select onchange="exPicker.category=this.value; render();">
+          <option value="">Semua Kategori</option>
+          ${catList.map(c=>`<option value="${c}" ${exPicker.category===c?'selected':''}>${c}</option>`).join("")}
+        </select>
+      </div>
+      <div class="field"><label>Equipment</label>
+        <select onchange="exPicker.equipment=this.value; render();">
+          <option value="">Semua Equipment</option>
+          ${eqList.map(e=>`<option value="${e}" ${exPicker.equipment===e?'selected':''}>${e}</option>`).join("")}
+        </select>
+      </div>
+    </div>
+    <div class="field"><label>Level</label>
+      <select onchange="exPicker.level=this.value; render();">
+        <option value="">Semua Level</option>
+        ${EXERCISE_LEVELS.map(l=>`<option value="${l}" ${exPicker.level===l?'selected':''}>${l}</option>`).join("")}
+      </select>
+    </div>
+    <div class="ex-grid">
+      ${list.length===0 ? `<div class="chart-empty">Tidak ada latihan yang cocok dengan filter ini. Coba ubah filter, atau buat custom exercise.</div>` : list.map(x=>exerciseCard(kind,x,`selectExercise('${x.id}')`)).join("")}
+    </div>
+    <button class="btn ghost" style="margin-top:4px;" onclick="openCustomExerciseModal('${kind}')">+ Create Custom Exercise</button>
+  `;
+}
+
+/* ---- Modal: Create Custom Exercise (strength & aerobic) ---- */
+let customExDraft = null;
+function openCustomExerciseModal(kind){
+  customExDraft = kind==="strength"
+    ? { kind, name:"", category:"", equipment:"", movement_pattern:"", target_muscles:"", training_goal:"", difficulty:"", description:"" }
+    : { kind, exercise_name:"", category:"", training_objective:"", modality:"", equipment:"", difficulty:"", description:"",
+        default_duration_minutes:"", default_work_seconds:"", default_rest_seconds:"", default_sets:"",
+        intensity_method:"", default_intensity_min:"", default_intensity_max:"" };
+  openModal("addCustomExercise", kind);
+}
+function modalAddCustomExercise(kind){
+  const d = customExDraft;
+  const catList = kind==="strength" ? STRENGTH_CATEGORIES : AEROBIC_CATEGORIES_FLAT;
+  const eqList = kind==="strength" ? STRENGTH_EQUIPMENT : AEROBIC_EQUIPMENT;
+  return `
+    <div class="modal-head"><h3>+ Create Custom ${kind==="strength"?"Strength":"Aerobic"} Exercise</h3><button class="close-x" onclick="closeModal()">${icon('close',18)}</button></div>
+    <div class="field"><label>Nama Latihan</label><input type="text" value="${kind==='strength'?d.name:d.exercise_name}" oninput="customExDraft.${kind==='strength'?'name':'exercise_name'}=this.value"/></div>
+    <div class="field"><label>Kategori</label>
+      <select onchange="customExDraft.category=this.value">
+        <option value="">Pilih kategori</option>
+        ${catList.map(c=>`<option value="${c}" ${d.category===c?'selected':''}>${c}</option>`).join("")}
+      </select>
+    </div>
+    <div class="field"><label>Equipment</label>
+      <select onchange="customExDraft.equipment=this.value">
+        <option value="">Pilih equipment</option>
+        ${eqList.map(e=>`<option value="${e}" ${d.equipment===e?'selected':''}>${e}</option>`).join("")}
+      </select>
+    </div>
+    ${kind==="strength" ? `
+      <div class="field"><label>Movement Pattern</label>
+        <select onchange="customExDraft.movement_pattern=this.value">
+          <option value="">-</option>
+          ${MOVEMENT_PATTERNS.map(m=>`<option value="${m}" ${d.movement_pattern===m?'selected':''}>${m}</option>`).join("")}
+        </select>
+      </div>
+      <div class="field"><label>Target Otot</label><input type="text" value="${d.target_muscles}" oninput="customExDraft.target_muscles=this.value" placeholder="cth. Quadriceps, Glutes"/></div>
+      <div class="field"><label>Training Goal</label>
+        <select onchange="customExDraft.training_goal=this.value">
+          <option value="">-</option>
+          ${TRAINING_GOALS.map(g=>`<option value="${g}" ${d.training_goal===g?'selected':''}>${g}</option>`).join("")}
+        </select>
+      </div>
+    ` : `
+      <div class="field"><label>Training Objective</label>
+        <select onchange="customExDraft.training_objective=this.value">
+          <option value="">-</option>
+          ${AEROBIC_OBJECTIVES.map(o=>`<option value="${o}" ${d.training_objective===o?'selected':''}>${o}</option>`).join("")}
+        </select>
+      </div>
+      <div class="field"><label>Exercise Modality</label><input type="text" value="${d.modality}" oninput="customExDraft.modality=this.value" placeholder="cth. Running, Cycling, Rowing"/></div>
+      <div class="field-row3">
+        <div class="field"><label>Default Durasi (menit)</label><input type="number" min="0" value="${d.default_duration_minutes}" oninput="customExDraft.default_duration_minutes=this.value"/></div>
+        <div class="field"><label>Work Interval (detik)</label><input type="number" min="0" value="${d.default_work_seconds}" oninput="customExDraft.default_work_seconds=this.value"/></div>
+        <div class="field"><label>Recovery Interval (detik)</label><input type="number" min="0" value="${d.default_rest_seconds}" oninput="customExDraft.default_rest_seconds=this.value"/></div>
+      </div>
+      <div class="field"><label>Default Sets/Interval</label><input type="number" min="0" value="${d.default_sets}" oninput="customExDraft.default_sets=this.value"/></div>
+      <div class="field"><label>Intensity Method</label>
+        <select onchange="customExDraft.intensity_method=this.value">
+          <option value="">-</option>
+          ${INTENSITY_METHODS.map(m=>`<option value="${m.value}" ${d.intensity_method===m.value?'selected':''}>${m.label}</option>`).join("")}
+        </select>
+      </div>
+    `}
+    <div class="field"><label>Level</label>
+      <select onchange="customExDraft.difficulty=this.value">
+        <option value="">-</option>
+        ${EXERCISE_LEVELS.map(l=>`<option value="${l}" ${d.difficulty===l?'selected':''}>${l}</option>`).join("")}
+      </select>
+    </div>
+    <div class="field"><label>Deskripsi / Instruksi (opsional)</label><input type="text" value="${d.description}" oninput="customExDraft.description=this.value"/></div>
+    <div id="cex-err" class="err" style="display:none;"></div>
+    <button class="btn" style="margin-top:10px;" onclick="submitCustomExercise()">Simpan ke Library</button>
+  `;
+}
+let cexSubmitting = false;
+async function submitCustomExercise(){
+  if(cexSubmitting) return;
+  const d = customExDraft;
+  const errBox = document.getElementById("cex-err");
+  const name = (d.kind==="strength" ? d.name : d.exercise_name || "").trim();
+  if(!name || !d.category){ errBox.style.display="block"; errBox.textContent="Nama latihan dan kategori wajib diisi."; return; }
+  const table = d.kind==="strength" ? "strength_exercise_library" : "aerobic_exercise_library";
+  const lib = d.kind==="strength" ? cache.strengthLibrary : cache.aerobicLibrary;
+  const dupField = d.kind==="strength" ? "name" : "exercise_name";
+  const dup = lib.find(x=>(x[dupField]||"").toLowerCase()===name.toLowerCase() && x.category===d.category);
+  if(dup){ errBox.style.display="block"; errBox.textContent = `Latihan "${name}" sudah ada di kategori ${d.category}. Hindari duplikasi, gunakan yang sudah tersedia.`; return; }
+  errBox.style.display="none";
+  const payload = d.kind==="strength"
+    ? { name, category:d.category, equipment:d.equipment||null, movement_pattern:d.movement_pattern||null,
+        target_muscles:d.target_muscles||null, training_goal:d.training_goal||null, difficulty:d.difficulty||null,
+        description:d.description||null, is_default:false, created_by: cache.profile?cache.profile.id:null }
+    : { exercise_name:name, category:d.category, training_objective:d.training_objective||null, modality:d.modality||null,
+        equipment:d.equipment||null, difficulty:d.difficulty||null, description:d.description||null,
+        default_duration_minutes: d.default_duration_minutes?Number(d.default_duration_minutes):null,
+        default_work_seconds: d.default_work_seconds?Number(d.default_work_seconds):null,
+        default_rest_seconds: d.default_rest_seconds?Number(d.default_rest_seconds):null,
+        default_sets: d.default_sets?Number(d.default_sets):null,
+        intensity_method: d.intensity_method||null, is_custom:true, created_by: cache.profile?cache.profile.id:null };
+  cexSubmitting = true;
+  const { data, error } = await sb.from(table).insert(payload).select().single();
+  cexSubmitting = false;
+  if(error){ errBox.style.display="block"; errBox.textContent = "Gagal menyimpan: " + error.message + " — pastikan migration strength_exercise_library/aerobic_exercise_library sudah dijalankan."; return; }
+  if(d.kind==="strength") cache.strengthLibrary.push(data); else cache.aerobicLibrary.push(data);
+  showToast(`"${name}" ditambahkan ke library`);
+  const cb = exPickerOnSelect;
+  exPickerOnSelect = null;
+  customExDraft = null;
+  if(cb){ cb(data); } else { closeModal(); render(); }
+}
+function deleteCustomExercise(kind, id){
+  if(!confirm("Hapus custom exercise ini dari library? Latihan yang sudah tercatat di sesi lama tidak akan terhapus.")) return;
+  const table = kind==="strength" ? "strength_exercise_library" : "aerobic_exercise_library";
+  sb.from(table).delete().eq("id", id).then(({error})=>{
+    if(error){ showToast("Gagal menghapus: " + error.message); return; }
+    if(kind==="strength") cache.strengthLibrary = cache.strengthLibrary.filter(x=>x.id!==id);
+    else cache.aerobicLibrary = cache.aerobicLibrary.filter(x=>x.id!==id);
+    render();
+    showToast("Exercise dihapus dari library");
+  });
+}
+
+/* ---- Halaman browse "Exercise Library" (nav tab) ---- */
+function viewExerciseLibrary(){
+  if(!state.exlibKind) state.exlibKind = "strength";
+  if(state.exlibSearch==null) state.exlibSearch = "";
+  if(state.exlibCategory==null) state.exlibCategory = "";
+  const kind = state.exlibKind;
+  const lib = kind==="strength" ? cache.strengthLibrary : cache.aerobicLibrary;
+  let list = lib.slice();
+  if(state.exlibCategory) list = list.filter(x=>x.category===state.exlibCategory);
+  if(state.exlibSearch){
+    const s = state.exlibSearch.toLowerCase();
+    list = list.filter(x=>exName(kind,x).toLowerCase().includes(s));
+  }
+  list = list.sort((a,b)=>(a.category||"").localeCompare(b.category||"") || exName(kind,a).localeCompare(exName(kind,b)));
+  const catList = kind==="strength" ? STRENGTH_CATEGORIES : AEROBIC_CATEGORIES_FLAT;
+  return `
+    <h2 class="page-title">Exercise Library</h2>
+    <p class="helper" style="margin:-4px 0 12px;">Pusat latihan strength & aerobik yang bisa dipakai berulang kali di semua program — Masterplan, Weekly Plan, Daily Planner, dan Training Load.</p>
+    <div class="section-tabs">
+      <button class="${kind==='strength'?'active':''}" onclick="state.exlibKind='strength'; render();">${icon('activity',14)} Strength Library (${cache.strengthLibrary.length})</button>
+      <button class="${kind==='aerobic'?'active':''}" onclick="state.exlibKind='aerobic'; render();">${icon('clock',14)} Aerobic Library (${cache.aerobicLibrary.length})</button>
+    </div>
+    <input type="text" placeholder="Cari latihan..." value="${state.exlibSearch}" oninput="state.exlibSearch=this.value; render();" style="width:100%;padding:10px 12px;border:1px solid var(--border);border-radius:10px;margin-bottom:10px;font-size:13px;"/>
+    <select onchange="state.exlibCategory=this.value; render();" style="width:100%;padding:10px 12px;border:1px solid var(--border);border-radius:10px;margin-bottom:12px;font-size:13px;">
+      <option value="">Semua Kategori</option>
+      ${catList.map(c=>`<option value="${c}" ${state.exlibCategory===c?'selected':''}>${c}</option>`).join("")}
+    </select>
+    ${isStaff() ? `<button class="btn ghost" style="margin-bottom:12px;" onclick="openCustomExerciseModal('${kind}')">+ Create Custom Exercise</button>` : ""}
+    <div class="ex-grid">
+      ${list.length===0 ? `<div class="chart-empty">Belum ada latihan untuk kategori/pencarian ini.</div>` : list.map(x=>exerciseLibraryCard(kind,x)).join("")}
+    </div>
+  `;
+}
+function exerciseLibraryCard(kind, item){
+  const fav = isFavoriteExercise(kind, item.id);
+  const name = exName(kind, item);
+  const isCustom = kind==="strength" ? item.is_default===false : item.is_custom===true;
+  const sub = kind==="strength"
+    ? [item.movement_pattern, item.equipment, item.difficulty].filter(Boolean).join(" · ")
+    : [item.training_objective, item.modality, item.equipment].filter(Boolean).join(" · ");
+  return `
+    <div class="chart-card ex-card">
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;">
+        <div><b style="font-size:14px;">${name}</b><p class="helper" style="margin:2px 0 0;">${item.category||""}${sub?` · ${sub}`:""}</p></div>
+        <span style="cursor:pointer;font-size:17px;flex-shrink:0;" onclick="toggleFavoriteExercise('${kind}','${item.id}')">${fav?'⭐':'☆'}</span>
+      </div>
+      ${item.description ? `<p class="helper" style="margin:6px 0 0;">${item.description}</p>` : ""}
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-top:10px;gap:8px;">
+        <span class="badge" style="background:${isCustom?'var(--muted)':'var(--turquoise-dark)'};">${isCustom?'Custom':'Default'}</span>
+        ${isCustom && isStaff() ? `<span class="delete-link" style="margin:0;" onclick="deleteCustomExercise('${kind}','${item.id}')">${icon('trash',13)} Hapus</span>` : `<span class="helper">Bawaan sistem</span>`}
+      </div>
+    </div>
+  `;
+}
+
+/* ---- Aerobic Intensity Calculator (persentase MAS -> speed/pace) ---- */
+function masCalcForAthlete(athleteId){
+  const hist = cache.masResults[athleteId];
+  if(!hist || !hist.length) return null;
+  return hist[0]; // sudah terurut terbaru dulu (lihat refreshMasResults)
+}
+function masTargetSpeed(masMs, pct){ return masMs * (Number(pct)/100); }
+function formatPaceFromSpeed(speedMs){
+  if(!speedMs || speedMs<=0) return "-";
+  const secPerKm = 1000/speedMs;
+  const min = Math.floor(secPerKm/60);
+  const sec = Math.round(secPerKm%60);
+  return `${min}:${String(sec).padStart(2,'0')} /km`;
+}
+
+/* ---- Field editor aerobik (dipakai di Catat Sesi Latihan & Daily Planner Conditioning) ----
+   `set(field)` adalah closure yang mengembalikan string handler JS, cth:
+   field => `updateTlAeroRowField(2,'${field}',this.value)` */
+function aerobicExerciseFields(ex, athleteId, set){
+  if(athleteId && !(athleteId in cache.masResults)) refreshMasResults(athleteId).then(render);
+  const mas = athleteId ? masCalcForAthlete(athleteId) : null;
+  let masPreview = "";
+  if(ex.intensityMethod==="MAS" && ex.masPct){
+    if(mas){
+      const speed = masTargetSpeed(mas.masMs, ex.masPct);
+      masPreview = `<div class="helper" style="margin:-4px 0 10px;">Target Speed: <b>${speed.toFixed(2)} m/s</b> · ${(speed*3.6).toFixed(2)} km/h · Pace <b>${formatPaceFromSpeed(speed)}</b> <span style="opacity:.75;">(dari tes MAS terakhir: ${mas.masMs} m/s)</span></div>`;
+    } else {
+      masPreview = `<div class="helper" style="margin:-4px 0 10px;color:var(--warning);">Atlet belum punya data tes MAS — isi dulu di halaman Tes MAS atlet untuk kalkulasi speed/pace otomatis.</div>`;
+    }
+  }
+  return `
+    <div class="field-row3">
+      <div class="field"><label>Durasi (menit)</label><input type="number" min="0" value="${ex.duration||''}" oninput="${set('duration')}"/></div>
+      <div class="field"><label>Distance</label><input type="text" value="${ex.distance||''}" oninput="${set('distance')}" placeholder="opsional, cth. 5 km"/></div>
+      <div class="field"><label>Jumlah Set/Interval</label><input type="number" min="0" value="${ex.sets||''}" oninput="${set('sets')}"/></div>
+    </div>
+    <div class="field-row3">
+      <div class="field"><label>Work Interval (detik)</label><input type="number" min="0" value="${ex.workSec||''}" oninput="${set('workSec')}" placeholder="cth. 120"/></div>
+      <div class="field"><label>Recovery Interval (detik)</label><input type="number" min="0" value="${ex.restSec||''}" oninput="${set('restSec')}" placeholder="cth. 60"/></div>
+      <div class="field"><label>Rest antar set (opsional)</label><input type="text" value="${ex.rest||''}" oninput="${set('rest')}" placeholder="cth. 2 min"/></div>
+    </div>
+    <div class="field"><label>Metode Intensitas</label>
+      <select onchange="${set('intensityMethod')}; render();">
+        <option value="">-</option>
+        ${INTENSITY_METHODS.map(m=>`<option value="${m.value}" ${ex.intensityMethod===m.value?'selected':''}>${m.label}</option>`).join("")}
+      </select>
+    </div>
+    <div class="field-row3">
+      <div class="field"><label>Target Intensity Min (%)</label><input type="number" min="0" max="100" value="${ex.intensityMin||''}" oninput="${set('intensityMin')}"/></div>
+      <div class="field"><label>Target Intensity Max (%)</label><input type="number" min="0" max="100" value="${ex.intensityMax||''}" oninput="${set('intensityMax')}"/></div>
+      <div class="field"><label>%MAS (jika metode MAS)</label><input type="number" min="0" max="100" value="${ex.masPct||''}" onchange="${set('masPct')}; render();"/></div>
+    </div>
+    ${masPreview}
+    <div class="field-row">
+      <div class="field"><label>Target Heart Rate (bpm, opsional)</label><input type="text" value="${ex.targetHR||''}" oninput="${set('targetHR')}"/></div>
+      <div class="field"><label>Target Pace/Speed (opsional)</label><input type="text" value="${ex.targetPace||''}" oninput="${set('targetPace')}" placeholder="cth. 5:30/km"/></div>
+    </div>
+    <div class="field"><label>RPE Target (0-10)</label><input type="number" min="0" max="10" value="${ex.rpeTarget||''}" oninput="${set('rpeTarget')}"/></div>
+    <div class="field"><label>Training Notes</label><input type="text" value="${ex.notes||''}" oninput="${set('notes')}"/></div>
+  `;
+}
+
 /* ---------------- ACUTE : CHRONIC WORKLOAD RATIO (ACWR) ----------------
    Acute Load  = total session load 7 hari terakhir (rolling window)
    Chronic Load = rata-rata beban mingguan selama 28 hari terakhir
@@ -2343,6 +2784,8 @@ let state = {
 };
 let chartInstances = {};
 let tlDraft = null; // draft state form "Catat Sesi Latihan" (Training Load)
+let tlSubmitting = false; // guard supaya klik berulang tidak menyimpan sesi dua kali
+let csSubmitting = false; // guard yang sama untuk "Selesaikan Sesi" Daily Planner
 let dpDraft = null; // draft state builder "Daily Session Plan"
 function destroyChart(id){ if(chartInstances[id]){ chartInstances[id].destroy(); delete chartInstances[id]; } }
 
@@ -2392,6 +2835,7 @@ function render(){
       ${navBtn("competitions","trophy","Kompetisi")}
       ${navBtn("masterplan","target","Master Plan")}
       ${navBtn("tests","clipboard","Kategori Tes")}
+      ${navBtn("exlib","activity","Library")}
       ${navBtn("history","clock","Riwayat")}
     </nav>
   `;
@@ -2421,6 +2865,7 @@ function renderMain(){
   if(state.tab === "athletes") main.innerHTML = state.athleteId ? viewAthleteDetail() : viewAthleteList();
   if(state.tab === "history") main.innerHTML = viewHistory();
   if(state.tab === "masterplan") main.innerHTML = state.mpId ? viewMasterplanDetail() : viewMasterplanList();
+  if(state.tab === "exlib") main.innerHTML = viewExerciseLibrary();
   if(state.tab === "compare") main.innerHTML = viewComparison();
   if(state.tab === "calendar") main.innerHTML = viewCalendar();
   if(state.tab === "competitions") main.innerHTML = state.competitionId ? viewCompetitionDetail() : viewCompetitionList();
@@ -4721,7 +5166,7 @@ function athleteLoadSection(a){
         <div class="history-row" style="${isStaff()?'align-items:flex-start;':''}">
           <div class="h-left">
             <b>${r.trainingType} · ${new Date(r.date).toLocaleDateString("id-ID",{day:"2-digit",month:"short",year:"numeric"})}</b>
-            <span>${r.duration} menit × RPE ${r.rpe}${r.volumeLoad>0?` · Volume ${Math.round(r.volumeLoad)} kg`:""}</span>
+            <span>${r.duration} menit × RPE ${r.rpe}${r.volumeLoad>0?` · Volume ${Math.round(r.volumeLoad)} kg`:""}${r.aerobicData && r.aerobicData.length?` · ${r.aerobicData.length} aerobic exercise`:""}</span>
           </div>
           <div style="display:flex;align-items:center;gap:8px;">
             <span class="badge" style="background:#16A085">${Math.round(r.load)} AU</span>
@@ -4759,21 +5204,44 @@ function drawLoadChart(){
 
 /* ---- Modal: Catat Sesi Latihan (dengan input Strength Training) ---- */
 function openTrainingSessionModal(athleteId){
-  tlDraft = { athleteId, date: new Date().toISOString().slice(0,10), type:"", duration:"", rpe:"", notes:"", rows:[] };
+  tlDraft = { athleteId, date: new Date().toISOString().slice(0,10), type:"", duration:"", rpe:"", notes:"", rows:[], aerobicRows:[] };
   openModal("addTrainingSession", athleteId);
 }
 function changeTlType(val){ tlDraft.type = val; render(); }
 function addTlRow(){ tlDraft.rows.push({exercise:"",sets:"",reps:"",load:"",pct1rm:"",rir:"",exerciseRpe:""}); render(); }
 function removeTlRow(i){ tlDraft.rows.splice(i,1); render(); }
 function updateTlRow(i, field, val){ tlDraft.rows[i][field] = val; }
+function pickTlStrengthExercise(){
+  openExercisePicker('strength', item=>{
+    tlDraft.rows.push({ exerciseId:item.id, exercise:item.name, sets:"", reps:"", load:"", pct1rm:"", rir:"", exerciseRpe:"" });
+    openModal('addTrainingSession', tlDraft.athleteId);
+    showToast(`"${item.name}" ditambahkan ke sesi`);
+  });
+}
+function pickTlAerobicExercise(){
+  openExercisePicker('aerobic', item=>{
+    tlDraft.aerobicRows = tlDraft.aerobicRows || [];
+    tlDraft.aerobicRows.push({
+      exerciseId:item.id, name:item.exercise_name, category:item.category, objective:item.training_objective||"",
+      modality:item.modality||"", duration:item.default_duration_minutes||"", distance:"", sets:item.default_sets||"",
+      workSec:item.default_work_seconds||"", restSec:item.default_rest_seconds||"", rest:"",
+      intensityMethod:item.intensity_method||"", intensityMin:item.default_intensity_min||"", intensityMax:item.default_intensity_max||"",
+      targetHR:"", targetPace:"", masPct:"", rpeTarget:"", notes:""
+    });
+    openModal('addTrainingSession', tlDraft.athleteId);
+    showToast(`"${item.exercise_name}" ditambahkan ke sesi`);
+  });
+}
+function removeTlAeroRow(i){ tlDraft.aerobicRows.splice(i,1); render(); }
+function updateTlAeroRowField(i, field, val){ tlDraft.aerobicRows[i][field] = val; }
 function refreshTlLoad(){
   const el = document.getElementById("tl-load-preview");
   if(el) el.innerHTML = `Session Load: <b>${(Number(tlDraft.duration)||0)*(Number(tlDraft.rpe)||0)} AU</b> (Duration × RPE)`;
 }
 function modalAddTrainingSession(athleteId){
-  if(!tlDraft || tlDraft.athleteId!==athleteId) tlDraft = { athleteId, date:new Date().toISOString().slice(0,10), type:"", duration:"", rpe:"", notes:"", rows:[] };
+  if(!tlDraft || tlDraft.athleteId!==athleteId) tlDraft = { athleteId, date:new Date().toISOString().slice(0,10), type:"", duration:"", rpe:"", notes:"", rows:[], aerobicRows:[] };
   const d = tlDraft;
-  const strength = isStrengthCategory(d.type);
+  if(!d.aerobicRows) d.aerobicRows = [];
   const groupOrder = ["COMBAT","STRENGTH","CONDITIONING","SAQ","RECOVERY","OTHER"];
   const optionsHtml = groupOrder.map(g=>`
     <optgroup label="${TRAINING_GROUP_LABELS[g]}">
@@ -4803,34 +5271,47 @@ function modalAddTrainingSession(athleteId){
     <div class="helper" id="tl-load-preview">Session Load: <b>${sessionLoad||0} AU</b> (Duration × RPE)</div>
     <div class="field"><label>Catatan (opsional)</label><input type="text" value="${d.notes||''}" oninput="tlDraft.notes=this.value" placeholder="Catatan tambahan"/></div>
 
-    ${strength ? `
-      <h3 style="margin:14px 0 8px;">Strength Exercises</h3>
-      ${d.rows.map((row,i)=>`
-        <div class="chart-card" style="margin-bottom:10px;">
-          <div class="field"><label>Exercise</label><input type="text" value="${row.exercise||''}" oninput="updateTlRow(${i},'exercise',this.value)" placeholder="cth. Back Squat"/></div>
-          <div class="field-row3">
-            <div class="field"><label>Sets</label><input type="number" min="1" max="100" value="${row.sets||''}" oninput="updateTlRow(${i},'sets',this.value)"/></div>
-            <div class="field"><label>Reps</label><input type="number" min="1" max="100" value="${row.reps||''}" oninput="updateTlRow(${i},'reps',this.value)"/></div>
-            <div class="field"><label>Load (kg)</label><input type="number" min="0" max="1000" value="${row.load||''}" oninput="updateTlRow(${i},'load',this.value)"/></div>
-          </div>
-          <div class="field-row3">
-            <div class="field"><label>% 1RM (opsional)</label><input type="number" min="0" max="100" value="${row.pct1rm||''}" oninput="updateTlRow(${i},'pct1rm',this.value)"/></div>
-            <div class="field"><label>RIR (opsional)</label><input type="number" min="0" max="10" value="${row.rir||''}" oninput="updateTlRow(${i},'rir',this.value)"/></div>
-            <div class="field"><label>Exercise RPE (opsional)</label><input type="number" min="0" max="10" value="${row.exerciseRpe||''}" oninput="updateTlRow(${i},'exerciseRpe',this.value)"/></div>
-          </div>
-          <div class="helper">Volume Load: <b>${(Number(row.sets)||0)*(Number(row.reps)||0)*(Number(row.load)||0)} kg</b></div>
-          <span class="delete-link" onclick="removeTlRow(${i})">Hapus exercise</span>
+    <h3 style="margin:14px 0 8px;">Strength Exercises</h3>
+    <p class="helper" style="margin:-4px 0 8px;">Satu sesi bisa berisi latihan strength & aerobik sekaligus — tidak perlu mencatat dua kali.</p>
+    ${d.rows.map((row,i)=>`
+      <div class="chart-card" style="margin-bottom:10px;">
+        <div class="field"><label>Exercise</label><input type="text" value="${row.exercise||''}" oninput="updateTlRow(${i},'exercise',this.value)" placeholder="cth. Back Squat"/></div>
+        <div class="field-row3">
+          <div class="field"><label>Sets</label><input type="number" min="1" max="100" value="${row.sets||''}" oninput="updateTlRow(${i},'sets',this.value)"/></div>
+          <div class="field"><label>Reps</label><input type="number" min="1" max="100" value="${row.reps||''}" oninput="updateTlRow(${i},'reps',this.value)"/></div>
+          <div class="field"><label>Load (kg)</label><input type="number" min="0" max="1000" value="${row.load||''}" oninput="updateTlRow(${i},'load',this.value)"/></div>
         </div>
-      `).join("")}
-      <button class="btn ghost" onclick="addTlRow()">+ Tambah Exercise</button>
-      <div class="helper" style="margin-top:8px;">Total Volume Load: <b>${totalVolume} kg</b></div>
-    ` : ""}
+        <div class="field-row3">
+          <div class="field"><label>% 1RM (opsional)</label><input type="number" min="0" max="100" value="${row.pct1rm||''}" oninput="updateTlRow(${i},'pct1rm',this.value)"/></div>
+          <div class="field"><label>RIR (opsional)</label><input type="number" min="0" max="10" value="${row.rir||''}" oninput="updateTlRow(${i},'rir',this.value)"/></div>
+          <div class="field"><label>Exercise RPE (opsional)</label><input type="number" min="0" max="10" value="${row.exerciseRpe||''}" oninput="updateTlRow(${i},'exerciseRpe',this.value)"/></div>
+        </div>
+        <div class="helper">Volume Load: <b>${(Number(row.sets)||0)*(Number(row.reps)||0)*(Number(row.load)||0)} kg</b></div>
+        <span class="delete-link" onclick="removeTlRow(${i})">Hapus exercise</span>
+      </div>
+    `).join("")}
+    <div style="display:flex;gap:10px;flex-wrap:wrap;">
+      <button class="btn" style="width:auto;" onclick="pickTlStrengthExercise()">+ Add Strength Exercise</button>
+      <button class="btn ghost" style="width:auto;" onclick="addTlRow()">+ Manual Entry</button>
+    </div>
+    <div class="helper" style="margin-top:8px;">Total Volume Load: <b>${totalVolume} kg</b></div>
+
+    <h3 style="margin:18px 0 8px;">Aerobic Conditioning</h3>
+    ${d.aerobicRows.map((row,i)=>`
+      <div class="chart-card" style="margin-bottom:10px;">
+        <div class="field"><label>Exercise</label><input type="text" value="${row.name||''}" oninput="updateTlAeroRowField(${i},'name',this.value)" placeholder="cth. MAS Running Intervals"/></div>
+        ${aerobicExerciseFields(row, athleteId, (f)=>`updateTlAeroRowField(${i},'${f}',this.value)`)}
+        <span class="delete-link" onclick="removeTlAeroRow(${i})">Hapus exercise</span>
+      </div>
+    `).join("")}
+    <button class="btn" style="width:auto;" onclick="pickTlAerobicExercise()">+ Add Aerobic Exercise</button>
 
     <div id="tl-err" class="err" style="display:none;margin-top:10px;"></div>
     <button class="btn" style="margin-top:12px;" onclick="submitTrainingSession()">Simpan Sesi</button>
   `;
 }
 async function submitTrainingSession(){
+  if(tlSubmitting) return;
   const errBox = document.getElementById("tl-err");
   const d = tlDraft;
   const duration = Number(d.duration);
@@ -4841,7 +5322,7 @@ async function submitTrainingSession(){
   errBox.style.display="none";
 
   let strengthPayload = null;
-  if(isStrengthCategory(d.type) && d.rows.length){
+  if(d.rows.length){
     const cleanRows = [];
     for(const r of d.rows){
       if(!r.exercise || r.sets==="" || r.reps==="" || r.load==="") continue;
@@ -4854,9 +5335,36 @@ async function submitTrainingSession(){
       const rir = r.rir===""?null:Number(r.rir);
       if(rir!=null && (rir<0||rir>10)){ errBox.style.display="block"; errBox.textContent="RIR harus antara 0-10."; return; }
       const exerciseRpe = r.exerciseRpe===""?null:Number(r.exerciseRpe);
-      cleanRows.push({ exercise:r.exercise, sets, reps, load, pct1rm, rir, exerciseRpe });
+      cleanRows.push({ exerciseId:r.exerciseId||null, exercise:r.exercise, sets, reps, load, pct1rm, rir, exerciseRpe });
     }
     if(cleanRows.length) strengthPayload = cleanRows;
+  }
+
+  let aerobicPayload = null;
+  if(d.aerobicRows && d.aerobicRows.length){
+    const cleanAero = [];
+    for(const r of d.aerobicRows){
+      if(!r.name) continue;
+      const numFields = ['duration','sets','workSec','restSec','intensityMin','intensityMax','masPct','rpeTarget'];
+      for(const f of numFields){
+        if(r[f]!=="" && r[f]!=null && isNaN(Number(r[f]))){
+          errBox.style.display="block"; errBox.textContent = `Data aerobik "${r.name}": field ${f} harus berupa angka.`; return;
+        }
+      }
+      if(r.rpeTarget!=="" && r.rpeTarget!=null && (Number(r.rpeTarget)<0||Number(r.rpeTarget)>10)){
+        errBox.style.display="block"; errBox.textContent = `RPE Target aerobik "${r.name}" harus antara 0-10.`; return;
+      }
+      cleanAero.push({
+        exerciseId: r.exerciseId||null, exercise: r.name, category: r.category||null, objective: r.objective||null, modality: r.modality||null,
+        plannedDuration: r.duration!==""?Number(r.duration):null, distance: r.distance||null,
+        sets: r.sets!==""?Number(r.sets):null, workSec: r.workSec!==""?Number(r.workSec):null, restSec: r.restSec!==""?Number(r.restSec):null,
+        rest: r.rest||null, intensityMethod: r.intensityMethod||null,
+        intensityMin: r.intensityMin!==""?Number(r.intensityMin):null, intensityMax: r.intensityMax!==""?Number(r.intensityMax):null,
+        targetHR: r.targetHR||null, targetPace: r.targetPace||null, masPct: r.masPct!==""?Number(r.masPct):null,
+        rpeTarget: r.rpeTarget!==""?Number(r.rpeTarget):null, notes: r.notes||null
+      });
+    }
+    if(cleanAero.length) aerobicPayload = cleanAero;
   }
 
   const sessionLoad = duration * rpe;
@@ -4865,12 +5373,15 @@ async function submitTrainingSession(){
     duration_minutes: duration, session_rpe: rpe, notes: d.notes || null
   };
   if(strengthPayload) insertObj.strength_data = strengthPayload;
+  if(aerobicPayload) insertObj.aerobic_data = aerobicPayload;
 
+  tlSubmitting = true;
   const { error } = await sb.from("training_sessions").insert(insertObj);
+  tlSubmitting = false;
   if(error){
     errBox.style.display="block";
-    errBox.textContent = strengthPayload
-      ? "Gagal menyimpan: " + error.message + " — pastikan kolom strength_data (jsonb) sudah ditambahkan di tabel training_sessions."
+    errBox.textContent = (strengthPayload || aerobicPayload)
+      ? "Gagal menyimpan: " + error.message + " — pastikan kolom strength_data & aerobic_data (jsonb) sudah ditambahkan di tabel training_sessions."
       : "Gagal menyimpan: " + error.message;
     return;
   }
@@ -5704,7 +6215,10 @@ function weekDatesFrom(mondayStr){ return Array.from({length:7}, (_,i)=>addDaysI
 function emptyDpExercise(){
   return { id: genId("ex"), name:"", category:"", sets:"", reps:"", duration:"", distance:"",
     load:"", pct1rm:"", rpeTarget:"", rirTarget:"", rest:"", tempo:"", notes:"", completed:false,
-    rounds:"", roundDuration:"", restDuration:"", trainingType:"", intensity:"" };
+    rounds:"", roundDuration:"", restDuration:"", trainingType:"", intensity:"",
+    // field tambahan Strength/Aerobic Exercise Library (opsional, diisi saat exercise dipilih dari library)
+    exerciseId:"", objective:"", modality:"", workSec:"", restSec:"",
+    intensityMethod:"", intensityMin:"", intensityMax:"", targetHR:"", targetPace:"", masPct:"" };
 }
 function emptyDpBlock(category){ return { id: genId("blk"), category, exercises: [] }; }
 function emptyDailyPlan(dateStr){
@@ -6137,6 +6651,36 @@ function dpToggleRestDay(){ dpDraft.isRestDay = !dpDraft.isRestDay; render(); }
 function dpAddExercise(blockIdx){ dpDraft.blocks[blockIdx].exercises.push(emptyDpExercise()); render(); }
 function dpRemoveExercise(blockIdx, i){ dpDraft.blocks[blockIdx].exercises.splice(i,1); render(); }
 function dpUpdateExercise(blockIdx, i, field, val){ dpDraft.blocks[blockIdx].exercises[i][field] = val; }
+function dpDraftAthleteId(){
+  if(!dpDraft || !dpDraft.mpId) return null;
+  const mp = loadMasterplans().find(m=>m.id===dpDraft.mpId);
+  return mp ? mp.athleteId : null;
+}
+function reopenDailyPlanBuilder(){ openModal("editDailyPlan", {mpId:dpDraft.mpId, date:dpDraft.date}); }
+function pickStrengthForDp(blockIdx, i){
+  openExercisePicker('strength', item=>{
+    Object.assign(dpDraft.blocks[blockIdx].exercises[i], { exerciseId:item.id, name:item.name });
+    reopenDailyPlanBuilder();
+    showToast(`"${item.name}" ditambahkan`);
+  });
+}
+function pickAerobicForDp(blockIdx, i){
+  openExercisePicker('aerobic', item=>{
+    const ex = dpDraft.blocks[blockIdx].exercises[i];
+    Object.assign(ex, {
+      exerciseId: item.id, name: item.exercise_name, objective: item.training_objective||"", modality: item.modality||"",
+      duration: item.default_duration_minutes!=null ? item.default_duration_minutes : ex.duration,
+      sets: item.default_sets!=null ? item.default_sets : ex.sets,
+      workSec: item.default_work_seconds!=null ? item.default_work_seconds : ex.workSec,
+      restSec: item.default_rest_seconds!=null ? item.default_rest_seconds : ex.restSec,
+      intensityMethod: item.intensity_method || ex.intensityMethod,
+      intensityMin: item.default_intensity_min!=null ? item.default_intensity_min : ex.intensityMin,
+      intensityMax: item.default_intensity_max!=null ? item.default_intensity_max : ex.intensityMax
+    });
+    reopenDailyPlanBuilder();
+    showToast(`"${item.exercise_name}" ditambahkan`);
+  });
+}
 function dpExerciseFields(ex, blockIdx, i, category){
   const set = (f,v)=>`dpUpdateExercise(${blockIdx},${i},'${f}',this.value); dpRecalcVolume(${blockIdx},${i})`;
   if(category==="Combat"){
@@ -6162,6 +6706,7 @@ function dpExerciseFields(ex, blockIdx, i, category){
   }
   if(category==="Strength"){
     return `
+      <button class="btn ghost" style="margin-bottom:8px;" onclick="pickStrengthForDp(${blockIdx},${i})">${icon('search',14)} Pilih dari Strength Library</button>
       <div class="field"><label>Exercise</label><input type="text" value="${ex.name}" oninput="${set('name')}" placeholder="cth. Back Squat"/></div>
       <div class="field-row3">
         <div class="field"><label>Sets</label><input type="number" min="1" value="${ex.sets}" oninput="${set('sets')}"/></div>
@@ -6183,18 +6728,10 @@ function dpExerciseFields(ex, blockIdx, i, category){
   }
   if(category==="Conditioning"){
     return `
-      <div class="field"><label>Nama (cth. Assault Bike)</label><input type="text" value="${ex.name}" oninput="${set('name')}"/></div>
-      <div class="field-row3">
-        <div class="field"><label>Sets</label><input type="number" min="1" value="${ex.sets}" oninput="${set('sets')}"/></div>
-        <div class="field"><label>Durasi</label><input type="text" value="${ex.duration}" oninput="${set('duration')}" placeholder="cth. 2 min"/></div>
-        <div class="field"><label>Distance</label><input type="text" value="${ex.distance}" oninput="${set('distance')}" placeholder="opsional"/></div>
-      </div>
-      <div class="helper" id="vol-${blockIdx}-${i}" style="margin:-8px 0 10px;">${dpVolumeText(ex,"Conditioning")}</div>
-      <div class="field-row">
-        <div class="field"><label>Rest Interval</label><input type="text" value="${ex.rest}" oninput="${set('rest')}" placeholder="cth. 1 min"/></div>
-        <div class="field"><label>RPE Target</label><input type="number" min="0" max="10" value="${ex.rpeTarget}" oninput="${set('rpeTarget')}"/></div>
-      </div>
-      <div class="field"><label>Notes / coaching cues</label><input type="text" value="${ex.notes}" oninput="${set('notes')}"/></div>
+      <button class="btn ghost" style="margin-bottom:8px;" onclick="pickAerobicForDp(${blockIdx},${i})">${icon('search',14)} Pilih dari Aerobic Library</button>
+      <div class="field"><label>Nama (cth. MAS Running Intervals)</label><input type="text" value="${ex.name}" oninput="${set('name')}"/></div>
+      <div class="helper" id="vol-${blockIdx}-${i}" style="margin:0 0 8px;">${dpVolumeText(ex,"Conditioning")}</div>
+      ${aerobicExerciseFields(ex, dpDraftAthleteId(), (f)=>`dpUpdateExercise(${blockIdx},${i},'${f}',this.value); dpRecalcVolume(${blockIdx},${i})`)}
     `;
   }
   // Warm Up / Other
@@ -6263,7 +6800,7 @@ function submitDailyPlan(){
             return;
           }
         }
-        for(const f of ["sets","load","rounds","pct1rm"]){
+        for(const f of ["sets","load","rounds","pct1rm","workSec","restSec","intensityMin","intensityMax","masPct"]){
           if(ex[f]!=="" && ex[f]!=null && (isNaN(Number(ex[f])) || Number(ex[f])<0)){
             errBox.style.display="block";
             errBox.textContent = `${ex.name}: nilai ${f} tidak valid (harus angka, tidak boleh negatif).`;
@@ -6311,6 +6848,7 @@ function modalCompleteSession(payload){
   `;
 }
 async function submitCompleteSession(mpId, dateStr){
+  if(csSubmitting) return;
   const errBox = document.getElementById("cs-err");
   const duration = Number(document.getElementById("cs-duration").value);
   const rpe = Number(document.getElementById("cs-rpe").value);
@@ -6327,21 +6865,37 @@ async function submitCompleteSession(mpId, dateStr){
   // kalau tidak ada -> "Other".
   const strengthBlock = plan.blocks.find(b=>b.category==="Strength" && b.exercises.length>0);
   const combatBlock = plan.blocks.find(b=>b.category==="Combat" && b.exercises.length>0);
+  const condBlock = plan.blocks.find(b=>b.category==="Conditioning" && b.exercises.length>0);
   let sessionType = "Other";
   if(strengthBlock) sessionType = "Strength Training";
   else if(combatBlock) sessionType = combatBlock.exercises[0].trainingType || "Muay Thai";
-  else {
-    const condBlock = plan.blocks.find(b=>b.category==="Conditioning" && b.exercises.length>0);
-    if(condBlock) sessionType = "Running";
-  }
+  else if(condBlock) sessionType = "Running";
 
   let strengthPayload = null;
   if(strengthBlock){
     const rows = strengthBlock.exercises
       .filter(e=>e.name && e.sets && e.reps && e.load)
-      .map(e=>({ exercise:e.name, sets:Number(e.sets)||0, reps:Number(e.reps)||0, load:Number(e.load)||0,
+      .map(e=>({ exerciseId:e.exerciseId||null, exercise:e.name, sets:Number(e.sets)||0, reps:Number(e.reps)||0, load:Number(e.load)||0,
         pct1rm: e.pct1rm?Number(e.pct1rm):null, rir: e.rirTarget?Number(e.rirTarget):null, exerciseRpe: e.rpeTarget?Number(e.rpeTarget):null }));
     if(rows.length) strengthPayload = rows;
+  }
+
+  // Latihan aerobik dari blok Conditioning — satu sesi, dua jenis latihan,
+  // tidak perlu dicatat dua kali (langsung masuk ke kolom aerobic_data).
+  let aerobicPayload = null;
+  if(condBlock){
+    const rows = condBlock.exercises
+      .filter(e=>e.name)
+      .map(e=>({
+        exerciseId: e.exerciseId||null, exercise: e.name, objective: e.objective||null, modality: e.modality||null,
+        plannedDuration: e.duration?Number(e.duration)||null:null, distance: e.distance||null,
+        sets: e.sets?Number(e.sets)||null:null, workSec: e.workSec?Number(e.workSec)||null:null, restSec: e.restSec?Number(e.restSec)||null:null,
+        rest: e.rest||null, intensityMethod: e.intensityMethod||null,
+        intensityMin: e.intensityMin?Number(e.intensityMin)||null:null, intensityMax: e.intensityMax?Number(e.intensityMax)||null:null,
+        targetHR: e.targetHR||null, targetPace: e.targetPace||null, masPct: e.masPct?Number(e.masPct)||null:null,
+        rpeTarget: e.rpeTarget?Number(e.rpeTarget)||null:null, notes: e.notes||null
+      }));
+    if(rows.length) aerobicPayload = rows;
   }
 
   const insertObj = {
@@ -6349,8 +6903,11 @@ async function submitCompleteSession(mpId, dateStr){
     duration_minutes: duration, session_rpe: rpe, notes: `Dari Daily Plan: ${plan.title}`
   };
   if(strengthPayload) insertObj.strength_data = strengthPayload;
+  if(aerobicPayload) insertObj.aerobic_data = aerobicPayload;
 
+  csSubmitting = true;
   const { error } = await sb.from("training_sessions").insert(insertObj);
+  csSubmitting = false;
   if(error){
     errBox.style.display="block";
     errBox.textContent = "Gagal menyimpan ke Training Load: " + error.message;
@@ -6799,6 +7356,8 @@ function renderModal(){
   if(state.modal.name==="addWeeklyLog") modal.innerHTML = modalAddWeeklyLog(state.modal.payload);
   if(state.modal.name==="editPhase") modal.innerHTML = modalEditPhase(state.modal.payload);
   if(state.modal.name==="weekLoad") modal.innerHTML = modalWeekLoad(state.modal.payload);
+  if(state.modal.name==="exercisePicker") modal.innerHTML = modalExercisePicker(state.modal.payload);
+  if(state.modal.name==="addCustomExercise") modal.innerHTML = modalAddCustomExercise(state.modal.payload);
   overlay.appendChild(modal);
   document.getElementById("app").appendChild(overlay);
 }
@@ -6871,7 +7430,7 @@ async function handleAuthSubmit(){
 
 async function handleLogout(){
   await sb.auth.signOut();
-  cache = { athletes:[], tests:[], assessments:[], injuries:[], testCategories:[], bodyParts:[], profile:null, readiness:[], loads:[], goals:[], batteries:[], batterySessions:[], rehabLogs:[], asymmetry:[], notes:[], competitions:[], competitionResults:[], masterplans:[], scoringProfiles:[], scoringRanges:[] };
+  cache = { athletes:[], tests:[], assessments:[], injuries:[], testCategories:[], bodyParts:[], profile:null, readiness:[], loads:[], goals:[], batteries:[], batterySessions:[], rehabLogs:[], asymmetry:[], notes:[], competitions:[], competitionResults:[], masterplans:[], scoringProfiles:[], scoringRanges:[], strengthLibrary:[], aerobicLibrary:[] };
   renderAuthScreen();
 }
 
