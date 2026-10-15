@@ -1,68 +1,53 @@
-/* Fight With Jo - Performance App
-   Service Worker
+/* ============================================================================
+ * FightWithJo Performance App — Service Worker
+ * Tujuan: membuat app installable & punya app-shell offline minimal.
+ * TIDAK pernah menyentuh (selalu network passthrough, tanpa cache) untuk:
+ *   - request ke Supabase (API, Auth, Storage)
+ *   - request cross-origin ke CDN (Chart.js, @supabase/supabase-js, font, dll)
+ *   - request non-GET (POST/PUT/PATCH/DELETE) apa pun
+ * Supaya data atlet, autentikasi, dan penyimpanan TIDAK PERNAH basi/ter-cache
+ * secara tidak sengaja.
+ * ========================================================================== */
 
-   Strategi:
-   - App shell (index.html, manifest, ikon) di-precache -> app bisa dibuka offline.
-   - Halaman (navigasi): network-first dengan timeout, fallback ke cache.
-   - Library CDN (Chart.js, Supabase JS) & file statis: stale-while-revalidate.
-   - Supabase (API, auth, realtime, storage) TIDAK PERNAH di-cache. Semua request
-     ke sana langsung ke jaringan, karena app sudah punya antrean offline sendiri
-     (syncQueue) dan data lama tidak boleh tersaji sebagai data terbaru.
+const SW_VERSION = "fwj-v1";
+const CACHE_NAME = `fightwithjo-shell-${SW_VERSION}`;
 
-   Setiap kali mengubah index.html, naikkan CACHE_VERSION supaya user dapat versi baru. */
-
-const CACHE_VERSION = "v6";
-const CACHE_NAME = `fwj-app-${CACHE_VERSION}`;
-
-const APP_SHELL = [
+// Hanya app-shell statis milik origin sendiri yang di-cache.
+const SHELL_ASSETS = [
   "./",
   "./index.html",
   "./manifest.json",
   "./icon-192.png",
-  "./icon-512.png"
+  "./icon-512.png",
+  "./icon-192-maskable.png",
+  "./icon-512-maskable.png"
 ];
 
-// Library dari CDN yang dipakai index.html (dicache supaya chart & login tetap jalan offline)
-const CDN_ASSETS = [
-  "https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.0/chart.umd.min.js",
-  "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"
-];
-
-const CDN_HOSTS = ["cdnjs.cloudflare.com", "cdn.jsdelivr.net"];
-const NAVIGATION_TIMEOUT_MS = 4000;
-
-/* ---------------- INSTALL ---------------- */
+// --- INSTALL: precache app shell (best-effort, tidak boleh gagal total kalau 1 aset hilang) ---
 self.addEventListener("install", (event) => {
   event.waitUntil(
     (async () => {
       const cache = await caches.open(CACHE_NAME);
-
-      // Satu file gagal (misal icon-512.png belum ada) tidak boleh menggagalkan seluruh install.
-      await Promise.allSettled(
-        APP_SHELL.map((url) => cache.add(new Request(url, { cache: "reload" })))
+      await Promise.all(
+        SHELL_ASSETS.map((url) =>
+          cache.add(url).catch(() => {
+            /* aset opsional (misal ikon belum ada) — jangan gagalkan install */
+          })
+        )
       );
-
-      // Skrip CDN diambil no-cors (sama seperti <script> tanpa crossorigin) -> response opaque.
-      await Promise.allSettled(
-        CDN_ASSETS.map(async (url) => {
-          const res = await fetch(new Request(url, { mode: "no-cors" }));
-          await cache.put(url, res);
-        })
-      );
-
-      await self.skipWaiting();
+      self.skipWaiting();
     })()
   );
 });
 
-/* ---------------- ACTIVATE ---------------- */
+// --- ACTIVATE: bersihkan cache versi lama ---
 self.addEventListener("activate", (event) => {
   event.waitUntil(
     (async () => {
       const keys = await caches.keys();
       await Promise.all(
         keys
-          .filter((k) => k.startsWith("fwj-app-") && k !== CACHE_NAME)
+          .filter((k) => k.startsWith("fightwithjo-shell-") && k !== CACHE_NAME)
           .map((k) => caches.delete(k))
       );
       await self.clients.claim();
@@ -70,94 +55,75 @@ self.addEventListener("activate", (event) => {
   );
 });
 
-/* ---------------- FETCH ---------------- */
+// --- FETCH: strategi per jenis request ---
 self.addEventListener("fetch", (event) => {
   const req = event.request;
 
-  // Hanya tangani GET. POST/PATCH/DELETE (tulis data ke Supabase) lewat langsung.
+  // 1) Jangan pernah campur tangan request non-GET (insert/update/delete Supabase, dll).
   if (req.method !== "GET") return;
 
   const url = new URL(req.url);
-  if (url.protocol !== "http:" && url.protocol !== "https:") return;
+  const isSameOrigin = url.origin === self.location.origin;
 
-  // Supabase: jangan pernah dicache / dicegat (auth, REST, storage foto, realtime).
-  if (url.hostname.endsWith(".supabase.co") || url.hostname.endsWith(".supabase.in")) return;
+  // 2) Jangan pernah cache/intercept apa pun yang bukan origin sendiri
+  //    (Supabase REST/Auth/Storage, CDN Chart.js, CDN supabase-js, Google Fonts, dll).
+  //    Biarkan 100% lewat langsung ke network, apa adanya.
+  if (!isSameOrigin) return;
 
-  // Navigasi halaman -> network-first, fallback ke cache.
+  // 3) Untuk origin sendiri: jangan cache endpoint apa pun yang mengandung "supabase"
+  //    (jaga-jaga kalau suatu saat ada reverse-proxy same-origin ke Supabase).
+  if (url.pathname.toLowerCase().includes("supabase")) return;
+
+  // 4) Navigasi (buka app / reload) → network-first, fallback ke index.html di cache
+  //    supaya app tetap bisa dibuka saat offline, tapi selalu pakai versi terbaru saat online.
   if (req.mode === "navigate") {
-    event.respondWith(networkFirstNavigation(req));
+    event.respondWith(
+      (async () => {
+        try {
+          const fresh = await fetch(req);
+          const cache = await caches.open(CACHE_NAME);
+          cache.put("./index.html", fresh.clone()).catch(() => {});
+          return fresh;
+        } catch (err) {
+          const cache = await caches.open(CACHE_NAME);
+          const cached = await cache.match("./index.html");
+          if (cached) return cached;
+          throw err;
+        }
+      })()
+    );
     return;
   }
 
-  // File statis satu origin + library CDN -> stale-while-revalidate.
-  if (url.origin === self.location.origin || CDN_HOSTS.includes(url.hostname)) {
-    event.respondWith(staleWhileRevalidate(req));
-  }
+  // 5) Aset statis app-shell same-origin lain (manifest, ikon) → cache-first,
+  //    lalu update cache diam-diam di background (stale-while-revalidate).
+  event.respondWith(
+    (async () => {
+      const cache = await caches.open(CACHE_NAME);
+      const cached = await cache.match(req);
+      const networkFetch = fetch(req)
+        .then((resp) => {
+          if (resp && resp.ok) cache.put(req, resp.clone()).catch(() => {});
+          return resp;
+        })
+        .catch(() => null);
+
+      if (cached) {
+        // Jangan tunggu network — balas cache dulu, update cache di belakang.
+        networkFetch.catch(() => {});
+        return cached;
+      }
+      const net = await networkFetch;
+      if (net) return net;
+      // Tidak ada di cache & network gagal → biarkan error normal terjadi.
+      return fetch(req);
+    })()
+  );
 });
 
-async function networkFirstNavigation(req) {
-  const cache = await caches.open(CACHE_NAME);
-  try {
-    const fresh = await fetchWithTimeout(req, NAVIGATION_TIMEOUT_MS);
-    if (fresh && fresh.ok) {
-      cache.put("./index.html", fresh.clone()).catch(() => {});
-    }
-    return fresh;
-  } catch (err) {
-    const cached =
-      (await cache.match(req, { ignoreSearch: true })) ||
-      (await cache.match("./index.html")) ||
-      (await cache.match("./"));
-    if (cached) return cached;
-    return new Response(
-      "<!DOCTYPE html><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'>" +
-        "<title>Offline</title><body style='font-family:sans-serif;text-align:center;padding:48px 16px'>" +
-        "<h2>Kamu sedang offline</h2><p>Buka aplikasi sekali saat online agar bisa dipakai offline.</p></body>",
-      { status: 503, headers: { "Content-Type": "text/html; charset=utf-8" } }
-    );
-  }
-}
-
-async function staleWhileRevalidate(req) {
-  const cache = await caches.open(CACHE_NAME);
-  const cached = await cache.match(req);
-
-  const network = fetch(req)
-    .then((res) => {
-      // Response opaque (status 0) berasal dari <script> lintas origin; tetap aman disimpan.
-      if (res && (res.ok || res.type === "opaque")) {
-        cache.put(req, res.clone()).catch(() => {});
-      }
-      return res;
-    })
-    .catch(() => null);
-
-  if (cached) {
-    // Perbarui cache di belakang layar tanpa menahan response.
-    return cached;
-  }
-  const res = await network;
-  return res || Response.error();
-}
-
-function fetchWithTimeout(req, ms) {
-  return new Promise((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error("timeout")), ms);
-    fetch(req).then(
-      (res) => {
-        clearTimeout(timer);
-        resolve(res);
-      },
-      (err) => {
-        clearTimeout(timer);
-        reject(err);
-      }
-    );
-  });
-}
-
-/* ---------------- PESAN DARI HALAMAN ---------------- */
-// Opsional: navigator.serviceWorker.controller.postMessage("SKIP_WAITING")
+// --- Terima pesan manual dari app, misal untuk skip-waiting saat update tersedia ---
 self.addEventListener("message", (event) => {
-  if (event.data === "SKIP_WAITING") self.skipWaiting();
+  if (event.data === "SKIP_WAITING") {
+    self.skipWaiting();
+  }
 });
