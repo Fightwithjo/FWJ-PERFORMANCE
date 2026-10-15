@@ -5,136 +5,220 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
 <title>Fight With Jo - Performance App</title>
 <link rel="manifest" href="manifest.json" />
-<meta name="theme-color" content="#0A0A0A" />
+<meta name="theme-color" content="#0B0D0F" />
+<script>
+/* Anti-flash: terapkan preferensi tema (dark/light/system) sebelum halaman
+   pertama kali tergambar, supaya tidak ada "kedipan" dari dark ke light. */
+(function(){
+  try{
+    var saved = localStorage.getItem('fwj-theme') || 'dark';
+    var mode = saved;
+    if(saved === 'system'){
+      mode = (window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches) ? 'light' : 'dark';
+    }
+    if(mode === 'light'){ document.documentElement.setAttribute('data-theme','light'); }
+  }catch(e){}
+})();
+</script>
 <link rel="icon" href="icon-192.png" />
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.0/chart.umd.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
 <style>
   :root{
-    --bg:#FFFFFF;
+    color-scheme:dark;
+    /* ---- FightWithJo Dark Performance Theme ---- */
+    --bg:#0B0D0F;
+    --bg-secondary:#111519;
+    --surface:#1A2025;
+    --card:#1A2025;
+    --card-elevated:#222A30;
+    --border:#303940;
+    --text:#F5F7F8;
+    --muted:#A3ADB5;
+    --turquoise:#20C7B5;
+    --turquoise-dark:#16A085;
+    --turquoise-rgb:32,199,181;
+    --turquoise-tint:rgba(32,199,181,0.14);
+    --success:#22C55E;
+    --warning:#FACC15;
+    --danger:#EF4444;
+    --shadow:0 2px 10px rgba(0,0,0,0.35);
+    --shadow-sm:0 1px 4px rgba(0,0,0,0.3);
+    --radius:14px;
+    --sidebar-w:224px;
+    /* ---- status semantics (mapped onto new palette, kept as same var names so existing UI re-skins automatically) ---- */
+    --poor:#EF4444;
+    --average:#F59E0B;
+    --good:#3B82F6;
+    --elite:#22C55E;
+    --minor:#F59E0B;
+    --moderate:#D97706;
+    --severe:#EF4444;
+    --active:#EF4444;
+    --recovering:#3B82F6;
+    --cleared:#22C55E;
+    /* ---- soft alert tints (warn-box, deload chips, config banner) ---- */
+    --warn-high-bg:rgba(239,68,68,0.14); --warn-high-text:#FCA5A5; --warn-high-border:rgba(239,68,68,0.3);
+    --warn-med-bg:rgba(245,158,11,0.14); --warn-med-text:#FBBF24; --warn-med-border:rgba(245,158,11,0.3);
+  }
+  :root[data-theme="light"]{
+    color-scheme:light;
+    --bg:#F4F7F8;
+    --bg-secondary:#FFFFFF;
     --surface:#FFFFFF;
-    --border:#E2E8E7;
-    --text:#000000;
-    --muted:#5B6664;
-    --turquoise:#20B2AA;
-    --turquoise-dark:#159A94;
+    --card:#FFFFFF;
+    --card-elevated:#FFFFFF;
+    --border:#DCE3E7;
+    --text:#172126;
+    --muted:#66747D;
     --turquoise-tint:#E6F7F6;
-    --poor:#E24B4A;
-    --average:#EF9F27;
-    --good:#378ADD;
-    --elite:#1D9E75;
-    --minor:#EF9F27;
-    --moderate:#E2841F;
-    --severe:#E24B4A;
-    --active:#E24B4A;
-    --recovering:#378ADD;
-    --cleared:#1D9E75;
+    --shadow:0 2px 10px rgba(23,33,38,0.08);
+    --shadow-sm:0 1px 4px rgba(23,33,38,0.06);
+    --warn-high-bg:#FCEAEA; --warn-high-text:#8A2323; --warn-high-border:#F7D4D4;
+    --warn-med-bg:#FDF0DE; --warn-med-text:#8A5A16; --warn-med-border:#F6E0BC;
   }
   *{box-sizing:border-box;}
+  html{background:var(--bg);}
   body{
     margin:0;background:var(--bg);color:var(--text);
     font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
     -webkit-tap-highlight-color:transparent;
+    transition:background-color 200ms ease,color 200ms ease;
   }
+  ::selection{background:rgba(var(--turquoise-rgb),0.35);}
+  a{color:var(--turquoise-dark);}
+  ::-webkit-scrollbar{width:9px;height:9px;}
+  ::-webkit-scrollbar-track{background:transparent;}
+  ::-webkit-scrollbar-thumb{background:var(--border);border-radius:20px;}
+  :focus-visible{outline:2px solid var(--turquoise);outline-offset:2px;}
+  .svg-ic{display:inline-block;flex-shrink:0;vertical-align:-4px;}
+  .btn .svg-ic,.backup-btn .svg-ic,.close-x .svg-ic,nav.bottom .svg-ic,.chart-card h3 .svg-ic,.fab .svg-ic{vertical-align:middle;}
   #app{max-width:480px;margin:0 auto;min-height:100vh;padding-bottom:76px;position:relative;}
   header.top{
     display:flex;align-items:center;gap:10px;padding:16px 16px 12px;
-    background:var(--surface);border-bottom:1px solid var(--border);
+    background:
+      linear-gradient(135deg, rgba(var(--turquoise-rgb),0.10), rgba(var(--turquoise-rgb),0) 55%),
+      var(--bg-secondary);
+    border-bottom:1px solid var(--border);
     position:sticky;top:0;z-index:10;
   }
   .logo{
     width:34px;height:34px;border-radius:9px;flex-shrink:0;overflow:hidden;
-    box-shadow:0 1px 3px rgba(0,0,0,0.25);
+    box-shadow:0 1px 3px rgba(0,0,0,0.45);
   }
   .logo img{width:100%;height:100%;object-fit:cover;display:block;}
-  header.top h1{font-size:16px;margin:0;font-weight:800;letter-spacing:0.01em;line-height:1.15;}
-  header.top p{margin:1px 0 0;font-size:10.5px;color:var(--turquoise-dark);font-weight:700;text-transform:uppercase;letter-spacing:0.06em;}
-  .backup-btn{margin-left:auto;background:none;border:1px solid var(--border);border-radius:8px;padding:7px 10px;font-size:11px;color:var(--turquoise-dark);font-weight:600;cursor:pointer;}
+  header.top h1{font-size:16px;margin:0;font-weight:800;letter-spacing:0.01em;line-height:1.15;color:var(--text);}
+  header.top p{margin:1px 0 0;font-size:10.5px;color:var(--turquoise);font-weight:700;text-transform:uppercase;letter-spacing:0.06em;}
+  .backup-btn{
+    margin-left:auto;background:var(--card);border:1px solid var(--border);border-radius:10px;
+    width:34px;height:34px;padding:0;display:flex;align-items:center;justify-content:center;
+    color:var(--muted);cursor:pointer;transition:background-color 150ms ease,color 150ms ease,border-color 150ms ease;
+  }
+  .backup-btn:hover{color:var(--turquoise);border-color:var(--turquoise);background:var(--turquoise-tint);}
+  .theme-toggle{margin-left:6px;}
 
-  main{padding:16px;}
+  main{padding:16px;background:var(--bg);}
   h2.page-title{font-size:14px;font-weight:700;margin:0 0 12px;text-transform:uppercase;letter-spacing:0.02em;color:var(--muted);}
 
   .stat-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:20px;}
-  .stat-card{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:14px;box-shadow:0 1px 3px rgba(0,0,0,0.04);}
-  .stat-card .label{font-size:11px;color:var(--muted);margin-bottom:6px;}
-  .stat-card .value{font-size:24px;font-weight:700;color:var(--turquoise-dark);}
+  .stat-card{background:var(--card);border:1px solid var(--border);border-radius:var(--radius);padding:14px;box-shadow:var(--shadow-sm);transition:border-color 150ms ease,transform 150ms ease;}
+  .stat-card .label{font-size:11px;color:var(--muted);margin-bottom:6px;letter-spacing:0.02em;}
+  .stat-card .value{font-size:24px;font-weight:700;color:var(--text);}
 
   .cat-card{
     display:flex;align-items:center;gap:12px;
-    background:var(--surface);border:1px solid var(--border);border-left:4px solid var(--turquoise);
-    border-radius:12px;padding:13px 14px;margin-bottom:10px;box-shadow:0 1px 3px rgba(0,0,0,0.04);
+    background:var(--card);border:1px solid var(--border);border-left:3px solid var(--turquoise);
+    border-radius:var(--radius);padding:13px 14px;margin-bottom:10px;box-shadow:var(--shadow-sm);
+    transition:border-color 150ms ease,background-color 150ms ease;
   }
+  .cat-card:hover,.test-card:hover,.stat-card.clickable:hover,.mp-card:hover,.profile-card:hover{border-color:var(--turquoise);background:var(--card-elevated);}
   .cat-icon{
     width:42px;height:42px;border-radius:10px;background:var(--turquoise-tint);
-    display:flex;align-items:center;justify-content:center;font-size:20px;flex-shrink:0;
+    display:flex;align-items:center;justify-content:center;font-size:20px;flex-shrink:0;color:var(--turquoise);
   }
   .cat-info{flex:1;min-width:0;}
-  .cat-name{font-weight:700;font-size:14px;margin:0 0 2px;}
+  .cat-name{font-weight:700;font-size:14px;margin:0 0 2px;color:var(--text);}
   .cat-meta{font-size:11.5px;color:var(--muted);margin:0;}
   .cat-trend{font-size:12px;font-weight:700;flex-shrink:0;text-align:right;}
   .cat-trend .avg{font-size:16px;color:var(--text);}
 
   .card-list{display:flex;flex-direction:column;gap:10px;}
-  .test-card{display:flex;gap:12px;align-items:center;background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:12px;box-shadow:0 1px 3px rgba(0,0,0,0.04);}
-  .test-photo{width:44px;height:44px;border-radius:10px;background:var(--turquoise-tint);display:flex;align-items:center;justify-content:center;font-size:20px;flex-shrink:0;}
+  .test-card{display:flex;gap:12px;align-items:center;background:var(--card);border:1px solid var(--border);border-radius:var(--radius);padding:12px;box-shadow:var(--shadow-sm);transition:border-color 150ms ease,background-color 150ms ease;}
+  .test-photo{width:44px;height:44px;border-radius:10px;background:var(--turquoise-tint);display:flex;align-items:center;justify-content:center;font-size:20px;flex-shrink:0;color:var(--turquoise);}
   .test-info{flex:1;min-width:0;}
-  .test-name{font-weight:700;font-size:14px;margin:0 0 2px;}
+  .test-name{font-weight:700;font-size:14px;margin:0 0 2px;color:var(--text);}
   .test-desc{font-size:12px;color:var(--muted);margin:0;}
   .test-unit{font-size:11px;color:var(--turquoise-dark);font-weight:600;margin-top:2px;}
 
   .empty{text-align:center;padding:40px 16px;color:var(--muted);}
   .empty b{display:block;color:var(--text);font-size:15px;margin-bottom:4px;}
 
-  .btn{display:flex;align-items:center;justify-content:center;gap:6px;background:var(--turquoise);color:white;border:none;border-radius:10px;padding:13px;font-size:14.5px;font-weight:700;cursor:pointer;width:100%;}
-  .btn:active{background:var(--turquoise-dark);}
-  .btn.secondary{background:var(--surface);color:var(--text);border:1px solid var(--border);}
-  .btn.ghost{background:var(--turquoise-tint);color:var(--turquoise-dark);}
-  .btn.danger{background:var(--poor);}
+  .btn{display:flex;align-items:center;justify-content:center;gap:6px;background:var(--turquoise);color:#06211D;border:none;border-radius:10px;padding:13px;font-size:14.5px;font-weight:700;cursor:pointer;width:100%;transition:background-color 150ms ease,opacity 150ms ease,transform 150ms ease;}
+  .btn:hover{background:#2FE0CB;}
+  .btn:active{background:var(--turquoise-dark);color:#fff;}
+  .btn:disabled{opacity:0.55;cursor:not-allowed;}
+  .btn.secondary{background:var(--card);color:var(--text);border:1px solid var(--border);}
+  .btn.secondary:hover{border-color:var(--turquoise);color:var(--turquoise);background:var(--card);}
+  .btn.ghost{background:var(--turquoise-tint);color:var(--turquoise);}
+  .btn.ghost:hover{background:rgba(var(--turquoise-rgb),0.22);}
+  .btn.danger{background:var(--poor);color:#fff;}
+  .btn.danger:hover{background:#F87171;}
   .btn.small{padding:9px;font-size:13px;}
-  .fab{position:fixed;right:20px;bottom:88px;width:52px;height:52px;border-radius:26px;background:var(--turquoise);color:white;border:none;font-size:26px;box-shadow:0 6px 16px rgba(0,0,0,0.2);display:flex;align-items:center;justify-content:center;cursor:pointer;max-width:480px;margin:0 auto;}
+  .fab{position:fixed;right:20px;bottom:88px;width:52px;height:52px;border-radius:26px;background:var(--turquoise);color:#06211D;border:none;font-size:26px;box-shadow:0 8px 20px rgba(var(--turquoise-rgb),0.35);display:flex;align-items:center;justify-content:center;cursor:pointer;max-width:480px;margin:0 auto;transition:background-color 150ms ease,transform 150ms ease;}
+  .fab:hover{background:#2FE0CB;transform:translateY(-1px);}
 
-  nav.bottom{position:fixed;bottom:0;left:0;right:0;background:var(--surface);border-top:1px solid var(--border);display:flex;max-width:480px;margin:0 auto;}
-  nav.bottom button{flex:1;background:none;border:none;padding:10px 4px 12px;display:flex;flex-direction:column;align-items:center;gap:3px;color:var(--muted);font-size:10px;cursor:pointer;}
-  nav.bottom button .ic{font-size:18px;}
-  nav.bottom button.active{color:var(--turquoise-dark);}
+  nav.bottom{position:fixed;bottom:0;left:0;right:0;background:var(--bg-secondary);border-top:1px solid var(--border);display:flex;max-width:480px;margin:0 auto;}
+  nav.bottom button{flex:1;background:none;border:none;padding:10px 4px 12px;display:flex;flex-direction:column;align-items:center;gap:3px;color:var(--muted);font-size:10px;cursor:pointer;transition:color 150ms ease;}
+  nav.bottom button .ic{display:flex;align-items:center;justify-content:center;}
+  nav.bottom button.active{color:var(--turquoise);}
+  nav.bottom button:hover{color:var(--text);}
+  nav.bottom button.active:hover{color:var(--turquoise);}
 
   .field{display:flex;flex-direction:column;gap:6px;margin-bottom:14px;}
   .field label{font-size:12px;color:var(--muted);font-weight:600;}
-  .field input,.field select,.field textarea{border:1px solid var(--border);border-radius:8px;padding:10px 11px;font-size:14px;background:var(--surface);color:var(--text);width:100%;font-family:inherit;}
+  .field input,.field select,.field textarea{border:1px solid var(--border);border-radius:8px;padding:10px 11px;font-size:14px;background:var(--bg-secondary);color:var(--text);width:100%;font-family:inherit;transition:border-color 150ms ease,box-shadow 150ms ease;}
+  .field input::placeholder,.field textarea::placeholder{color:var(--muted);opacity:0.8;}
+  .field input:focus,.field select:focus,.field textarea:focus{outline:none;border-color:var(--turquoise);box-shadow:0 0 0 3px rgba(var(--turquoise-rgb),0.18);}
   .field-row{display:grid;grid-template-columns:1fr 1fr;gap:10px;}
   .field-row3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;}
 
-  .modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,0.45);display:flex;align-items:flex-end;justify-content:center;z-index:50;}
-  .modal{background:var(--bg);width:100%;max-width:480px;border-radius:16px 16px 0 0;padding:18px 16px 24px;max-height:88vh;overflow-y:auto;}
+  .modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,0.6);display:flex;align-items:flex-end;justify-content:center;z-index:50;}
+  .modal{background:var(--card-elevated);width:100%;max-width:480px;border-radius:16px 16px 0 0;padding:18px 16px 24px;max-height:88vh;overflow-y:auto;border:1px solid var(--border);border-bottom:none;box-shadow:0 -8px 30px rgba(0,0,0,0.4);}
   .modal-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;}
   .modal-head h3{margin:0;font-size:16px;}
-  .close-x{background:none;border:none;font-size:20px;color:var(--muted);cursor:pointer;padding:4px;}
+  .close-x{background:none;border:none;color:var(--muted);cursor:pointer;padding:6px;border-radius:8px;display:flex;transition:color 150ms ease,background-color 150ms ease;}
+  .close-x:hover{color:var(--text);background:var(--turquoise-tint);}
 
-  .badge{display:inline-block;padding:3px 9px;border-radius:20px;font-size:11px;font-weight:700;color:white;}
+  .badge{display:inline-block;padding:3px 9px;border-radius:20px;font-size:11px;font-weight:700;color:#06211D;}
   .report-table{width:100%;border-collapse:collapse;font-size:11.5px;min-width:480px;}
   .report-table th{text-align:left;color:var(--muted);font-weight:700;text-transform:uppercase;font-size:9.5px;padding:6px 8px;border-bottom:2px solid var(--border);white-space:nowrap;}
   .report-table td{padding:7px 8px;border-bottom:1px solid var(--border);white-space:nowrap;}
   @media print{
-    .top, .bottom, .fab, .backup-btn, .no-print{ display:none !important; }
-    body{ background:white; }
+    /* Printed/exported report tetap terang & mudah dibaca di atas kertas, terlepas dari tema aplikasi */
+    :root{
+      --bg:#FFFFFF;--bg-secondary:#FFFFFF;--surface:#FFFFFF;--card:#FFFFFF;--card-elevated:#FFFFFF;
+      --text:#15191C;--muted:#A3ADB5;--border:#E2E8E7;--turquoise-tint:#E6F7F6;
+    }
+    .top, .bottom, .fab, .backup-btn, .theme-toggle, .no-print{ display:none !important; }
+    body{ background:#fff; color:#15191C; }
     .report-page{ box-shadow:none !important; padding:0 !important; }
   }
-  .result-box{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:16px;text-align:center;margin:14px 0;}
-  .result-box .score{font-size:30px;font-weight:800;margin:6px 0;}
+  .result-box{background:var(--card);border:1px solid var(--border);border-radius:var(--radius);padding:16px;text-align:center;margin:14px 0;}
+  .result-box .score{font-size:30px;font-weight:800;margin:6px 0;color:var(--text);}
   .result-box .sub{font-size:12px;color:var(--muted);}
 
-  .history-row{display:flex;justify-content:space-between;align-items:center;background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:11px 12px;margin-bottom:8px;}
-  .history-row .h-left b{font-size:13.5px;display:block;}
+  .history-row{display:flex;justify-content:space-between;align-items:center;background:var(--card);border:1px solid var(--border);border-radius:10px;padding:11px 12px;margin-bottom:8px;}
+  .history-row .h-left b{font-size:13.5px;display:block;color:var(--text);}
   .history-row .h-left span{font-size:11.5px;color:var(--muted);}
-  .err{color:var(--poor);font-size:12px;margin:-8px 0 12px;}
+  .err{color:var(--poor);font-size:12px;margin:-8px 0 12px;display:flex;align-items:center;gap:5px;}
   .helper{font-size:11.5px;color:var(--muted);margin:-8px 0 14px;}
 
-  .chart-card{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:14px 12px 8px;margin-bottom:20px;box-shadow:0 1px 3px rgba(0,0,0,0.04);}
-  .chart-card h3{margin:0 0 10px;font-size:12.5px;color:var(--muted);font-weight:700;text-transform:uppercase;letter-spacing:0.02em;}
+  .chart-card{background:var(--card);border:1px solid var(--border);border-radius:var(--radius);padding:14px 12px 8px;margin-bottom:20px;box-shadow:var(--shadow-sm);}
+  .chart-card h3{margin:0 0 10px;font-size:12.5px;color:var(--muted);font-weight:700;text-transform:uppercase;letter-spacing:0.02em;display:flex;align-items:center;gap:6px;}
   .chart-empty{font-size:12.5px;color:var(--muted);text-align:center;padding:20px 0;}
 
-  .profile-card{display:flex;align-items:center;gap:12px;background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:12px;margin-bottom:10px;cursor:pointer;box-shadow:0 1px 3px rgba(0,0,0,0.04);}
-  .avatar{width:42px;height:42px;border-radius:50%;background:var(--turquoise);color:white;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:15px;flex-shrink:0;overflow:hidden;}
+  .profile-card{display:flex;align-items:center;gap:12px;background:var(--card);border:1px solid var(--border);border-radius:var(--radius);padding:12px;margin-bottom:10px;cursor:pointer;box-shadow:var(--shadow-sm);transition:border-color 150ms ease,background-color 150ms ease;}
+  .avatar{width:42px;height:42px;border-radius:50%;background:var(--turquoise);color:#06211D;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:15px;flex-shrink:0;overflow:hidden;}
   .avatar img{width:100%;height:100%;object-fit:cover;}
   .profile-info{flex:1;min-width:0;}
   .profile-name{font-weight:700;font-size:14px;margin:0 0 2px;}
@@ -157,7 +241,7 @@
 
   .section-tabs{display:flex;gap:6px;margin-bottom:14px;overflow-x:auto;}
   .section-tabs button{flex-shrink:0;padding:7px 12px;border-radius:20px;border:1px solid var(--border);background:var(--surface);font-size:12px;color:var(--muted);cursor:pointer;}
-  .section-tabs button.active{background:var(--turquoise);color:white;border-color:var(--turquoise);}
+  .section-tabs button.active{background:var(--turquoise);color:#06211D;border-color:var(--turquoise);}
 
   /* ---- Master Plan / Periodization ---- */
   .mp-card{display:flex;align-items:center;gap:12px;background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:13px 14px;margin-bottom:10px;box-shadow:0 1px 3px rgba(0,0,0,0.04);cursor:pointer;}
@@ -171,7 +255,7 @@
   .goal-hier{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:14px;margin-bottom:16px;}
   .goal-row{display:flex;align-items:flex-start;gap:10px;padding:7px 0;border-bottom:1px dashed var(--border);}
   .goal-row:last-child{border-bottom:none;}
-  .goal-tag{font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:0.03em;color:white;border-radius:6px;padding:3px 7px;flex-shrink:0;min-width:74px;text-align:center;}
+  .goal-tag{font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:0.03em;color:#06211D;border-radius:6px;padding:3px 7px;flex-shrink:0;min-width:74px;text-align:center;}
   .goal-tag.primary{background:var(--turquoise-dark);}
   .goal-tag.secondary{background:var(--good);}
   .goal-tag.maintenance{background:var(--muted);}
@@ -201,15 +285,15 @@
   .log-item{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:12px 13px;margin-bottom:10px;}
   .log-item .lhead{display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;}
   .log-item .lhead b{font-size:13px;}
-  .status-pill{font-size:10.5px;font-weight:700;padding:3px 9px;border-radius:20px;color:white;}
+  .status-pill{font-size:10.5px;font-weight:700;padding:3px 9px;border-radius:20px;color:#06211D;}
   .log-item .lrow{display:flex;gap:14px;font-size:12px;color:var(--muted);margin-bottom:6px;}
   .log-item .lrec{font-size:12px;background:var(--turquoise-tint);border-radius:8px;padding:8px 10px;color:var(--text);}
-  .delete-link{display:block;text-align:center;font-size:12.5px;color:var(--poor);font-weight:600;cursor:pointer;margin-top:18px;padding:10px;}
+  .delete-link{display:flex;align-items:center;justify-content:center;gap:5px;text-align:center;font-size:12.5px;color:var(--poor);font-weight:600;cursor:pointer;margin-top:18px;padding:10px;}
 
   /* ---- Master Plan: Phase timeline ---- */
   .mp-timeline-wrap{margin-bottom:16px;}
   .mp-timeline{display:flex;width:100%;height:34px;border-radius:8px;overflow:hidden;box-shadow:0 1px 3px rgba(0,0,0,0.08);}
-  .mp-timeline .seg{position:relative;display:flex;align-items:center;justify-content:center;font-size:9px;font-weight:800;color:#fff;overflow:hidden;white-space:nowrap;cursor:pointer;border-right:1px solid rgba(255,255,255,0.35);}
+  .mp-timeline .seg{position:relative;display:flex;align-items:center;justify-content:center;font-size:9px;font-weight:800;color:#06211D;overflow:hidden;white-space:nowrap;cursor:pointer;border-right:1px solid rgba(0,0,0,0.25);}
   .mp-timeline .seg:last-child{border-right:none;}
   .mp-timeline .seg.current::after{content:"";position:absolute;inset:0;box-shadow:inset 0 0 0 2px #fff;}
   .mp-timeline-legend{display:flex;flex-wrap:wrap;gap:8px;margin-top:8px;}
@@ -226,7 +310,7 @@
   .phase-card .pdates{font-size:11px;color:var(--muted);}
   .phase-card .ptags{display:flex;flex-wrap:wrap;gap:5px;margin-top:8px;}
   .phase-card .ptags span{font-size:10.5px;background:var(--turquoise-tint);color:var(--turquoise-dark);border-radius:6px;padding:3px 7px;font-weight:600;}
-  .phase-card .ptags span.deload{background:#FBE7CE;color:#8A5A16;}
+  .phase-card .ptags span.deload{background:var(--warn-med-bg);color:var(--warn-med-text);}
   .phase-card .pactions{display:flex;gap:14px;margin-top:8px;}
   .phase-card .pactions a{font-size:11.5px;font-weight:700;color:var(--turquoise-dark);cursor:pointer;}
   .phase-card .pactions a.del{color:var(--poor);}
@@ -243,20 +327,20 @@
   .vi-matrix{display:grid;grid-template-columns:52px repeat(3,1fr);gap:4px;margin:10px 0;}
   .vi-matrix .vi-hdr{font-size:9.5px;font-weight:800;color:var(--muted);text-transform:uppercase;text-align:center;align-self:end;padding-bottom:4px;}
   .vi-matrix .vi-row-lbl{font-size:9.5px;font-weight:800;color:var(--muted);text-transform:uppercase;display:flex;align-items:center;justify-content:flex-end;padding-right:4px;text-align:right;}
-  .vi-matrix .vi-cell{aspect-ratio:1;border-radius:8px;display:flex;flex-direction:column;align-items:center;justify-content:center;font-size:16px;font-weight:800;color:#fff;position:relative;}
+  .vi-matrix .vi-cell{aspect-ratio:1;border-radius:8px;display:flex;flex-direction:column;align-items:center;justify-content:center;font-size:16px;font-weight:800;color:#06211D;position:relative;}
   .vi-matrix .vi-cell .cnt{font-size:11px;font-weight:800;}
   .vi-matrix .vi-cell.active{box-shadow:0 0 0 2px var(--text) inset;}
   .vi-axis-label{text-align:center;font-size:9.5px;color:var(--muted);text-transform:uppercase;font-weight:700;letter-spacing:0.03em;margin-top:2px;}
   .vi-axis-label.y{writing-mode:vertical-rl;transform:rotate(180deg);position:absolute;}
 
-  .warn-box{border-radius:10px;padding:10px 12px;margin-bottom:8px;font-size:12px;line-height:1.45;display:flex;gap:8px;align-items:flex-start;}
-  .warn-box.sev-high{background:#FCEAEA;color:#8A2323;}
-  .warn-box.sev-med{background:#FDF0DE;color:#8A5A16;}
+  .warn-box{border-radius:10px;padding:10px 12px;margin-bottom:8px;font-size:12px;line-height:1.45;display:flex;gap:8px;align-items:flex-start;border:1px solid transparent;}
+  .warn-box.sev-high{background:var(--warn-high-bg);color:var(--warn-high-text);border-color:var(--warn-high-border);}
+  .warn-box.sev-med{background:var(--warn-med-bg);color:var(--warn-med-text);border-color:var(--warn-med-border);}
   .warn-box .wicon{flex-shrink:0;font-size:14px;}
 
   .metric-picker{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:6px;}
   .metric-picker button{flex-shrink:0;padding:5px 10px;border-radius:16px;border:1px solid var(--border);background:var(--surface);font-size:10.5px;font-weight:600;color:var(--muted);cursor:pointer;}
-  .metric-picker button.active{background:var(--turquoise-dark);color:#fff;border-color:var(--turquoise-dark);}
+  .metric-picker button.active{background:var(--turquoise-dark);color:#06211D;border-color:var(--turquoise-dark);}
   .load-type-card{background:var(--turquoise-tint);border-radius:10px;padding:10px 12px;margin-bottom:10px;}
   .load-type-card h4{margin:0 0 8px;font-size:12px;color:var(--turquoise-dark);text-transform:uppercase;letter-spacing:0.02em;}
 
@@ -268,9 +352,9 @@
 
   .bodymap-toggle{display:flex;gap:6px;margin-bottom:12px;}
   .bodymap-toggle button{flex:1;padding:8px;border-radius:8px;border:1px solid var(--border);background:var(--surface);font-size:12.5px;font-weight:600;color:var(--muted);cursor:pointer;}
-  .bodymap-toggle button.active{background:var(--turquoise);color:white;border-color:var(--turquoise);}
+  .bodymap-toggle button.active{background:var(--turquoise);color:#06211D;border-color:var(--turquoise);}
   .bodymap-wrap{display:flex;justify-content:center;background:var(--turquoise-tint);border-radius:12px;padding:12px;margin-bottom:12px;}
-  .hotspot{cursor:pointer;fill:#8FD4CF;stroke:white;stroke-width:1.5;transition:fill 0.15s;}
+  .hotspot{cursor:pointer;fill:#3A5F5A;stroke:var(--bg-secondary);stroke-width:1.5;transition:fill 0.15s;}
   .hotspot:hover{fill:var(--turquoise);}
   .hotspot.injured{fill:var(--poor);}
   .hotspot.selected{fill:var(--turquoise-dark);}
@@ -294,24 +378,30 @@
   .ba-card.improve .v{color:var(--elite);}
   .ba-card.decline .v{color:var(--poor);}
 
-  .toast{position:fixed;bottom:88px;left:50%;transform:translateX(-50%);background:var(--text);color:white;padding:9px 16px;border-radius:8px;font-size:13px;font-weight:500;box-shadow:0 8px 24px rgba(0,0,0,0.25);z-index:60;max-width:90%;text-align:center;}
+  .toast{position:fixed;bottom:88px;left:50%;transform:translateX(-50%);background:var(--card-elevated);color:var(--text);border:1px solid var(--border);padding:9px 16px;border-radius:10px;font-size:13px;font-weight:500;box-shadow:0 10px 30px rgba(0,0,0,0.5);z-index:60;max-width:90%;text-align:center;}
 
   /* ---- Auth screen ---- */
   #auth-screen{
     min-height:100vh;display:flex;flex-direction:column;align-items:center;justify-content:center;
-    padding:24px;background:#0A0A0A;
+    padding:24px;background:
+      radial-gradient(circle at 15% 12%, rgba(var(--turquoise-rgb),0.16), transparent 42%),
+      radial-gradient(circle at 85% 88%, rgba(var(--turquoise-rgb),0.10), transparent 45%),
+      var(--bg);
+    position:relative;overflow:hidden;
   }
+  .auth-geo{position:absolute;inset:0;pointer-events:none;opacity:0.5;}
   .auth-card{
-    background:#FFFFFF;border-radius:16px;padding:26px 22px;width:100%;max-width:360px;
-    box-shadow:0 12px 30px rgba(0,0,0,0.35);
+    position:relative;z-index:1;
+    background:var(--card-elevated);border:1px solid var(--border);border-radius:18px;padding:28px 22px;width:100%;max-width:360px;
+    box-shadow:0 20px 50px rgba(0,0,0,0.45);
   }
-  .auth-logo{display:flex;flex-direction:column;align-items:center;gap:10px;margin-bottom:18px;}
-  .auth-logo img{width:56px;height:56px;border-radius:14px;}
-  .auth-logo h1{margin:0;font-size:17px;font-weight:800;text-align:center;}
-  .auth-logo p{margin:0;font-size:10.5px;color:var(--turquoise-dark);font-weight:700;letter-spacing:0.05em;text-transform:uppercase;}
-  .auth-tabs{display:flex;gap:6px;margin-bottom:16px;background:var(--bg);border-radius:9px;padding:3px;}
-  .auth-tabs button{flex:1;border:none;background:transparent;padding:8px;border-radius:7px;font-size:12.5px;font-weight:700;color:var(--muted);cursor:pointer;}
-  .auth-tabs button.active{background:var(--surface);color:var(--turquoise-dark);box-shadow:0 1px 3px rgba(0,0,0,0.12);}
+  .auth-logo{display:flex;flex-direction:column;align-items:center;gap:10px;margin-bottom:20px;}
+  .auth-logo img{width:56px;height:56px;border-radius:14px;box-shadow:0 4px 16px rgba(0,0,0,0.4);}
+  .auth-logo h1{margin:0;font-size:17px;font-weight:800;text-align:center;letter-spacing:0.02em;color:var(--text);}
+  .auth-logo p{margin:0;font-size:10.5px;color:var(--turquoise);font-weight:700;letter-spacing:0.08em;text-transform:uppercase;}
+  .auth-tabs{display:flex;gap:6px;margin-bottom:16px;background:var(--bg-secondary);border-radius:9px;padding:3px;border:1px solid var(--border);}
+  .auth-tabs button{flex:1;border:none;background:transparent;padding:8px;border-radius:7px;font-size:12.5px;font-weight:700;color:var(--muted);cursor:pointer;transition:background-color 150ms ease,color 150ms ease;}
+  .auth-tabs button.active{background:var(--card);color:var(--turquoise);box-shadow:0 1px 3px rgba(0,0,0,0.3);}
   .auth-msg{font-size:12px;margin:-6px 0 12px;min-height:14px;}
   .auth-msg.error{color:var(--poor);}
   .auth-msg.ok{color:var(--elite);}
@@ -322,9 +412,10 @@
   .user-chip .role-dot{width:6px;height:6px;border-radius:50%;background:var(--turquoise-dark);}
   .logout-btn{background:none;border:none;color:var(--muted);font-size:10.5px;text-decoration:underline;cursor:pointer;padding:0;margin-left:6px;}
   .config-warning{
-    background:#3A1D16;color:#FFD9CC;border-radius:10px;padding:12px;font-size:12px;line-height:1.5;
+    background:var(--warn-high-bg);color:var(--warn-high-text);border:1px solid var(--warn-high-border);border-radius:10px;padding:12px;font-size:12px;line-height:1.5;
     max-width:340px;text-align:center;margin-top:16px;
   }
+  .config-warning code{background:rgba(0,0,0,0.25);padding:1px 5px;border-radius:4px;}
   .cal-nav{display:flex;align-items:center;justify-content:space-between;margin:6px 0 10px;font-size:13px;}
   .cal-nav button{background:var(--surface);border:1px solid var(--border);border-radius:8px;width:32px;height:32px;color:var(--text);font-size:16px;cursor:pointer;}
   .cal-grid{display:grid;grid-template-columns:repeat(7,1fr);gap:3px;}
@@ -343,6 +434,45 @@
   @media print{
     nav.bottom, .fab, .modal-overlay, .section-tabs, .btn, .back-row{ display:none !important; }
     body{ background:#fff; color:#000; }
+  }
+
+  /* ==========================================================
+     DESKTOP LAYOUT — sidebar kiri + canvas lebih luas.
+     Mobile (<900px) tidak berubah sama sekali: nav tetap bottom bar.
+     Murni CSS, tidak mengubah struktur HTML/JS/routing.
+  ========================================================== */
+  @media (min-width:900px){
+    body{background:var(--bg-secondary);}
+    #app{max-width:none;margin:0;padding-bottom:0;padding-left:var(--sidebar-w);min-height:100vh;background:var(--bg);}
+    header.top{padding:16px 28px;}
+    main{max-width:1180px;margin:0 auto;padding:24px 28px 48px;}
+    h2.page-title{font-size:13px;}
+
+    nav.bottom{
+      flex-direction:column;align-items:stretch;justify-content:flex-start;
+      left:0;right:auto;top:0;bottom:0;width:var(--sidebar-w);max-width:var(--sidebar-w);
+      margin:0;border-top:none;border-right:1px solid var(--border);
+      padding:18px 10px;gap:2px;overflow-y:auto;
+    }
+    nav.bottom button{
+      flex:none;flex-direction:row;justify-content:flex-start;align-items:center;gap:11px;
+      padding:10px 12px;border-radius:9px;font-size:12.5px;font-weight:600;text-align:left;
+    }
+    nav.bottom button span:last-child{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+    nav.bottom button.active{background:var(--turquoise-tint);}
+    nav.bottom button:hover{background:var(--card);}
+
+    .fab{left:auto;right:36px;bottom:36px;max-width:none;margin:0;}
+
+    .modal-overlay{align-items:center;padding:24px;}
+    .modal{border-radius:16px;max-height:84vh;box-shadow:0 24px 60px rgba(0,0,0,0.5);border-bottom:1px solid var(--border);}
+
+    .stat-grid{grid-template-columns:repeat(auto-fit,minmax(190px,1fr));}
+    .before-after{grid-template-columns:repeat(3,minmax(140px,1fr));}
+    .field-row{grid-template-columns:repeat(auto-fit,minmax(200px,1fr));}
+  }
+  @media (min-width:1200px){
+    .stat-grid{grid-template-columns:repeat(auto-fit,minmax(210px,1fr));}
   }
 </style>
 </head>
@@ -367,6 +497,101 @@ const sb = (SUPABASE_URL.includes("YOUR-PROJECT-REF") || !window.supabase)
 
 const BUCKET = "athlete-assets";
 
+/* ==========================================================
+   ICON SYSTEM — SVG outline inline (gaya Lucide), 24x24, stroke=currentColor.
+   Dipakai untuk navigasi, header, dan aksi umum. Emoji konten/data
+   (mis. ikon kategori tes dari DB) sengaja tidak diganti karena itu data,
+   bukan dekorasi UI.
+========================================================== */
+const ICONS = {
+  dashboard:'<rect x="3" y="3" width="7" height="9" rx="1.5"/><rect x="14" y="3" width="7" height="5" rx="1.5"/><rect x="14" y="12" width="7" height="9" rx="1.5"/><rect x="3" y="16" width="7" height="5" rx="1.5"/>',
+  users:'<circle cx="9" cy="8" r="3.2"/><path d="M3 20c0-3.3 2.7-5.5 6-5.5s6 2.2 6 5.5"/><circle cx="17" cy="8.5" r="2.4"/><path d="M15.5 14.3c2.6.3 4.5 2.2 4.5 5.2"/>',
+  compare:'<path d="M7 4v13"/><path d="M3 14l4 4 4-4"/><path d="M17 20V7"/><path d="M21 10l-4-4-4 4"/>',
+  calendar:'<rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18"/><path d="M8 3v4"/><path d="M16 3v4"/><circle cx="8" cy="14.5" r="1" fill="currentColor" stroke="none"/><circle cx="12" cy="14.5" r="1" fill="currentColor" stroke="none"/><circle cx="16" cy="14.5" r="1" fill="currentColor" stroke="none"/>',
+  trophy:'<path d="M8 4h8v4a4 4 0 0 1-8 0V4z"/><path d="M8 5H5a3 3 0 0 0 3 5"/><path d="M16 5h3a3 3 0 0 1-3 5"/><path d="M10 13v3"/><path d="M14 13v3"/><path d="M7 20h10"/><path d="M9 20v-2.5h6V20"/>',
+  target:'<circle cx="12" cy="12" r="8.5"/><circle cx="12" cy="12" r="5"/><circle cx="12" cy="12" r="1.5" fill="currentColor" stroke="none"/>',
+  clipboard:'<rect x="5" y="4" width="14" height="17" rx="2"/><rect x="9" y="2.5" width="6" height="3" rx="1"/><path d="M8.5 10h7"/><path d="M8.5 13.5h7"/><path d="M8.5 17h4.5"/>',
+  clock:'<circle cx="12" cy="12" r="8.5"/><path d="M12 7v5l3.2 2"/>',
+  gauge:'<path d="M4.5 16.5a7.5 7.5 0 1 1 15 0"/><path d="M12 13.5 15.5 9"/><circle cx="12" cy="13.5" r="1.2" fill="currentColor" stroke="none"/>',
+  activity:'<path d="M3 12h4l2.2-7 4 14 2.2-7H21"/>',
+  scan:'<path d="M4 8V5a1 1 0 0 1 1-1h3"/><path d="M20 8V5a1 1 0 0 0-1-1h-3"/><path d="M4 16v3a1 1 0 0 0 1 1h3"/><path d="M20 16v3a1 1 0 0 1-1 1h-3"/><circle cx="12" cy="12" r="3.2"/>',
+  reports:'<path d="M6 3h9l4 4v14a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1z"/><path d="M14 3v5h5"/><path d="M8.5 13v4"/><path d="M12 11v6"/><path d="M15.5 15v2"/>',
+  settings:'<circle cx="12" cy="12" r="3"/><path d="M19.4 13a7.7 7.7 0 0 0 0-2l2-1.5-2-3.4-2.4.6a7.6 7.6 0 0 0-1.7-1L15 3h-6l-.3 2.4a7.6 7.6 0 0 0-1.7 1l-2.4-.6-2 3.4L4.6 11a7.7 7.7 0 0 0 0 2l-2 1.5 2 3.4 2.4-.6c.5.4 1.1.8 1.7 1L9 21h6l.3-2.4c.6-.3 1.2-.6 1.7-1l2.4.6 2-3.4-2-1.5z"/>',
+  database:'<ellipse cx="12" cy="5.5" rx="7.5" ry="3"/><path d="M4.5 5.5V12c0 1.7 3.4 3 7.5 3s7.5-1.3 7.5-3V5.5"/><path d="M4.5 12v6.5c0 1.7 3.4 3 7.5 3s7.5-1.3 7.5-3V12"/>',
+  search:'<circle cx="11" cy="11" r="7"/><path d="M20 20l-4.3-4.3"/>',
+  download:'<path d="M12 3v12"/><path d="M7 10l5 5 5-5"/><path d="M4 19h16"/>',
+  close:'<path d="M5 5l14 14"/><path d="M19 5L5 19"/>',
+  trash:'<path d="M4 7h16"/><path d="M9 7V4.5A1.5 1.5 0 0 1 10.5 3h3A1.5 1.5 0 0 1 15 4.5V7"/><path d="M6 7l1 13a2 2 0 0 0 2 1.9h6a2 2 0 0 0 2-1.9l1-13"/><path d="M10 11v6"/><path d="M14 11v6"/>',
+  edit:'<path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/>',
+  print:'<path d="M6 9V3h12v6"/><rect x="5" y="9" width="14" height="7" rx="1.5"/><path d="M8 14h8v7H8z"/>',
+  save:'<path d="M5 4h11l3 3v13H5z"/><path d="M8 4v5h7V4"/><path d="M8 21v-6h8v6"/>',
+  warning:'<path d="M12 3.5l9.5 16.5H2.5z"/><path d="M12 9.5v4.5"/><circle cx="12" cy="16.7" r="0.9" fill="currentColor" stroke="none"/>',
+  check:'<path d="M4 12l5 5L20 6"/>',
+  sun:'<circle cx="12" cy="12" r="4.2"/><path d="M12 2.5v2.5M12 19v2.5M4.5 12H2M22 12h-2.5M5.6 5.6l1.8 1.8M16.6 16.6l1.8 1.8M18.4 5.6l-1.8 1.8M7.4 16.6l-1.8 1.8"/>',
+  moon:'<path d="M20 14.5A8.5 8.5 0 1 1 9.5 4a7 7 0 0 0 10.5 10.5z"/>',
+  monitor:'<rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8"/><path d="M12 16v4"/>',
+  plus:'<path d="M12 5v14"/><path d="M5 12h14"/>',
+  logout:'<path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><path d="M16 17l5-5-5-5"/><path d="M21 12H9"/>'
+};
+function icon(name, size, cls){
+  size = size || 20;
+  return `<svg class="svg-ic${cls?(' '+cls):''}" width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${ICONS[name]||''}</svg>`;
+}
+
+/* ==========================================================
+   THEME — Dark Mode (default) / Light Mode / System Default.
+   Preferensi disimpan di localStorage (per-perangkat). Kalau user sudah
+   login dan tabel profiles punya kolom theme_preference, kita coba
+   sinkronkan juga ke profil (best-effort, tidak mengasumsikan berhasil
+   kalau kolomnya belum ada di skema).
+========================================================== */
+const THEME_KEY = "fwj-theme";
+function getThemePref(){
+  try{ return localStorage.getItem(THEME_KEY) || "dark"; }catch(e){ return "dark"; }
+}
+function effectiveTheme(){
+  const pref = getThemePref();
+  if(pref === "system"){
+    return (window.matchMedia && window.matchMedia("(prefers-color-scheme: light)").matches) ? "light" : "dark";
+  }
+  return pref;
+}
+function applyChartTheme(){
+  if(typeof Chart === "undefined") return;
+  const dark = effectiveTheme() !== "light";
+  Chart.defaults.color = dark ? "#A3ADB5" : "#66747D";
+  Chart.defaults.borderColor = dark ? "#303940" : "#DCE3E7";
+  Chart.defaults.font = Chart.defaults.font || {};
+  Chart.defaults.font.family = "-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif";
+}
+function applyTheme(){
+  const eff = effectiveTheme();
+  if(eff === "light") document.documentElement.setAttribute("data-theme","light");
+  else document.documentElement.removeAttribute("data-theme");
+  applyChartTheme();
+}
+function setThemePref(mode){
+  try{ localStorage.setItem(THEME_KEY, mode); }catch(e){}
+  applyTheme();
+  if(sb && cache.profile && cache.profile.id){
+    sb.from("profiles").update({ theme_preference: mode }).eq("id", cache.profile.id)
+      .then(({error})=>{ /* best-effort; kalau kolom belum ada di skema, abaikan diam-diam */ });
+  }
+  render();
+}
+function cycleTheme(){
+  const cur = getThemePref();
+  const next = cur === "dark" ? "light" : (cur === "light" ? "system" : "dark");
+  setThemePref(next);
+  showToast(next === "system" ? "Tema: Mengikuti Sistem" : (next === "light" ? "Tema: Light Mode" : "Tema: Dark Mode"));
+}
+applyTheme();
+if(window.matchMedia){
+  window.matchMedia("(prefers-color-scheme: light)").addEventListener("change", function(){
+    if(getThemePref() === "system"){ applyTheme(); if(document.getElementById("app") && document.getElementById("app").innerHTML) render(); }
+  });
+}
+
 /* DB_KEYS dipertahankan supaya seluruh kode UI di bawah (yang memanggil
    loadDB(DB_KEYS.athletes) dsb) tidak perlu diubah satu per satu —
    loadDB() sekarang membaca dari cache in-memory yang diisi lewat
@@ -380,11 +605,11 @@ let cache = { athletes:[], tests:[], assessments:[], injuries:[], testCategories
   resultCountsByTest: {}, // { [testId]: jumlah performance_results } untuk Test Management & safe-delete
   masResults: {}, // { [athleteId]: [ {id, masMs, mhrBpm, date, notes}, ... ] } riwayat tes MAS, terbaru dulu
   perfClassBands: [
-    { id:null, label:"Elite", minScore:90, color:"#1D9E75" },
-    { id:null, label:"Advanced", minScore:80, color:"#159A94" },
-    { id:null, label:"Intermediate", minScore:70, color:"#378ADD" },
-    { id:null, label:"Developing", minScore:60, color:"#EF9F27" },
-    { id:null, label:"Beginner", minScore:0, color:"#E24B4A" }
+    { id:null, label:"Elite", minScore:90, color:"#22C55E" },
+    { id:null, label:"Advanced", minScore:80, color:"#16A085" },
+    { id:null, label:"Intermediate", minScore:70, color:"#3B82F6" },
+    { id:null, label:"Developing", minScore:60, color:"#F59E0B" },
+    { id:null, label:"Beginner", minScore:0, color:"#EF4444" }
   ]
 };
 
@@ -728,7 +953,7 @@ async function refreshPerfClassBands(){
   if(!sb) return;
   const { data, error } = await sb.from("performance_classification_bands").select("*").order("min_score",{ascending:false});
   if(error || !data || !data.length) return; // tabel belum ada -> pakai default spec di memori
-  cache.perfClassBands = data.map(b=>({ id:b.id, label:b.label, minScore:Number(b.min_score), color:b.color||"#5B6664" }));
+  cache.perfClassBands = data.map(b=>({ id:b.id, label:b.label, minScore:Number(b.min_score), color:b.color||"#A3ADB5" }));
 }
 
 async function refreshAll(){
@@ -776,12 +1001,12 @@ function dataUrlToBlob(dataUrl){
    Logika kategori performa (Poor / Average / Good / Elite)
 ========================================================== */
 const CAT_META = {
-  Poor:{color:"var(--poor)"}, "Below Average":{color:"#E2841F"}, Average:{color:"var(--average)"},
-  Good:{color:"var(--good)"}, Excellent:{color:"#159A94"}, Elite:{color:"var(--elite)"}
+  Poor:{color:"var(--poor)"}, "Below Average":{color:"#D97706"}, Average:{color:"var(--average)"},
+  Good:{color:"var(--good)"}, Excellent:{color:"#16A085"}, Elite:{color:"var(--elite)"}
 };
 function catColor(cat){
-  const m = { Poor:"#E24B4A", "Below Average":"#E2841F", Average:"#EF9F27", Good:"#378ADD", Excellent:"#159A94", Elite:"#1D9E75" };
-  return m[cat] || "#5B6664";
+  const m = { Poor:"#EF4444", "Below Average":"#D97706", Average:"#F59E0B", Good:"#3B82F6", Excellent:"#16A085", Elite:"#22C55E" };
+  return m[cat] || "#A3ADB5";
 }
 // LEGACY — tidak lagi dipakai untuk scoring aktif (diganti scoring engine
 // gender/age-based di bawah). Dibiarkan ada supaya tidak ada referensi rusak
@@ -920,10 +1145,10 @@ function perfCategoryBreakdown(athleteId){
 // hardcode, supaya Admin/Pelatih bisa mengubahnya sesuai kebutuhan program.
 // HANYA dipakai untuk Overall Performance Score, bukan skor per test item.
 function perfClassify(score){
-  if(score==null) return { label:"Belum ada data", color:"#5B6664" };
+  if(score==null) return { label:"Belum ada data", color:"#A3ADB5" };
   const bands = [...cache.perfClassBands].sort((a,b)=>b.minScore-a.minScore);
   const band = bands.find(b=>score>=b.minScore) || bands[bands.length-1];
-  return band ? { label:band.label, color:band.color } : { label:"-", color:"#5B6664" };
+  return band ? { label:band.label, color:band.color } : { label:"-", color:"#A3ADB5" };
 }
 // Overall Performance Score = rata-rata skor (0-100) dari TEST ITEM yang
 // sudah dilakukan & punya scoring standard valid — BUKAN rata-rata semua
@@ -1019,7 +1244,7 @@ function athletePerformanceScoreSection(a){
           <b style="font-size:11.5px;color:var(--muted);text-transform:uppercase;">Tests Used</b>
           ${r.completedTests.map(res=>{
             const t = cache.tests.find(x=>x.id===res.testId);
-            return `<div class="history-row"><div class="h-left"><b>✓ ${t?t.name:'(test dihapus)'}</b><span>${Math.round(res.score*10)/10}</span></div></div>`;
+            return `<div class="history-row"><div class="h-left"><b>${icon('check',13)} ${t?t.name:'(test dihapus)'}</b><span>${Math.round(res.score*10)/10}</span></div></div>`;
           }).join("")}
         </div>
       ` : `<div class="chart-empty" style="margin-top:14px;">Belum ada hasil fitness test.${isStaff()?' <span style="color:var(--turquoise-dark);font-weight:700;cursor:pointer;" onclick="openModal(\'addAssessment\',\''+a.id+'\')">+ Add Test Result</span>':''}</div>`}
@@ -1050,7 +1275,7 @@ function athletePerformanceScoreSection(a){
       <div class="chart-card">
         <div style="display:flex;justify-content:space-between;align-items:center;">
           <h3 style="margin:0;">Performance Classification</h3>
-          <span style="font-size:11.5px;font-weight:700;color:var(--turquoise-dark);cursor:pointer;" onclick="togglePerfBandEditor()">${state.perfEditingBands?'Batal':'✏️ Edit'}</span>
+          <span style="font-size:11.5px;font-weight:700;color:var(--turquoise-dark);cursor:pointer;" onclick="togglePerfBandEditor()">${state.perfEditingBands?'Batal':(icon('edit',13)+' Edit')}</span>
         </div>
         ${!state.perfEditingBands ? `
           ${[...cache.perfClassBands].sort((a,b)=>b.minScore-a.minScore).map(b=>`
@@ -1128,7 +1353,7 @@ function fmtChange(ch){
   if(!ch) return `<span class="helper" style="margin:0;">–</span>`;
   const up = (ch.zeroBase ? ch.abs : ch.pct) >= 0;
   const text = ch.zeroBase ? `${up?'+':''}${ch.abs}` : `${up?'+':''}${ch.pct}%`;
-  return `<span style="font-weight:700;color:${up?'var(--good,#1D9E75)':'var(--poor,#E24B4A)'};">${up?'▲':'▼'} ${text}</span>`;
+  return `<span style="font-weight:700;color:${up?'var(--good,#22C55E)':'var(--poor,#EF4444)'};">${up?'▲':'▼'} ${text}</span>`;
 }
 // Snapshot overall + skor kategori "sampai dengan tanggal ini" untuk setiap
 // tanggal hasil tes yang ada -> jadi dasar Progress Chart & Initial vs Latest.
@@ -1211,7 +1436,7 @@ function perfAnalysisAndProgressBlock(a){
       <p class="helper" style="margin-top:10px;"><b>Strengths:</b> ${an.strengths.length?an.strengths.map(c=>c.label).join(", "):"Belum ada kategori yang menonjol."}</p>
       <p class="helper"><b>Weaknesses:</b> ${an.weaknesses.length?an.weaknesses.map(c=>c.label).join(", "):"Tidak ada kategori lemah yang menonjol."}</p>
       <div class="field" style="background:var(--turquoise-tint);border-radius:10px;padding:10px 12px;margin-top:8px;">
-        <b style="font-size:12px;">🎯 Recommended Training Focus</b>
+        <b style="font-size:12px;">${icon('target',14)} Recommended Training Focus</b>
         <p class="helper" style="margin:4px 0 0;">${perfRecommendation(an)}</p>
       </div>
     </div>
@@ -1291,7 +1516,7 @@ function drawPerfScoreCharts(athleteId){
   if(radarEl){
     chartInstances["chart-perf-radar"] = new Chart(radarEl, {
       type:"radar",
-      data:{ labels: an.breakdown.map(c=>c.label), datasets:[{ label:"Skor", data: an.breakdown.map(c=>c.score??0), borderColor:"#159A94", backgroundColor:"rgba(21,154,148,0.2)", pointRadius:3 }] },
+      data:{ labels: an.breakdown.map(c=>c.label), datasets:[{ label:"Skor", data: an.breakdown.map(c=>c.score??0), borderColor:"#16A085", backgroundColor:"rgba(32,199,181,0.2)", pointRadius:3 }] },
       options:{ responsive:true, scales:{ r:{ min:0, max:100, ticks:{stepSize:25, font:{size:9}}, pointLabels:{font:{size:10}} } }, plugins:{ legend:{display:false} } }
     });
   }
@@ -1301,7 +1526,7 @@ function drawPerfScoreCharts(athleteId){
     const items = perfTestItemComparison(athleteId);
     chartInstances["chart-perf-bar"] = new Chart(barEl, {
       type:"bar",
-      data:{ labels: items.map(x=>x.test.name), datasets:[{ label:"Skor Terbaru", data: items.map(x=>Math.round(x.last.score)), backgroundColor:"#20B2AA" }] },
+      data:{ labels: items.map(x=>x.test.name), datasets:[{ label:"Skor Terbaru", data: items.map(x=>Math.round(x.last.score)), backgroundColor:"#20C7B5" }] },
       options:{ indexAxis:"y", responsive:true, plugins:{legend:{display:false}}, scales:{ x:{min:0,max:100, ticks:{font:{size:9}}}, y:{ticks:{font:{size:10}}} } }
     });
   }
@@ -1311,7 +1536,7 @@ function drawPerfScoreCharts(athleteId){
     const snaps = perfHistorySnapshots(athleteId);
     chartInstances["chart-perf-progress"] = new Chart(progEl, {
       type:"line",
-      data:{ labels: snaps.map(s=>new Date(s.date).toLocaleDateString("id-ID",{day:"2-digit",month:"short"})), datasets:[{ label:"Overall Score", data: snaps.map(s=>s.overall), borderColor:"#159A94", backgroundColor:"rgba(21,154,148,0.1)", pointRadius:4, tension:0.2, fill:true }] },
+      data:{ labels: snaps.map(s=>new Date(s.date).toLocaleDateString("id-ID",{day:"2-digit",month:"short"})), datasets:[{ label:"Overall Score", data: snaps.map(s=>s.overall), borderColor:"#16A085", backgroundColor:"rgba(32,199,181,0.12)", pointRadius:4, tension:0.2, fill:true }] },
       options:{ responsive:true, scales:{ y:{min:0,max:100, ticks:{font:{size:9}}}, x:{ticks:{font:{size:9}}} }, plugins:{legend:{display:false}} }
     });
   }
@@ -1369,7 +1594,7 @@ function openSelectTestsModal(athleteId){
 function modalSelectTests(athleteId){
   const a = cache.athletes.find(x=>x.id===athleteId);
   return `
-    <div class="modal-head"><h3>Select Tests — ${a?a.name:''}</h3><button class="close-x" onclick="closeModal()">✕</button></div>
+    <div class="modal-head"><h3>Select Tests — ${a?a.name:''}</h3><button class="close-x" onclick="closeModal()">${icon('close',18)}</button></div>
     <p class="helper">Performance Score atlet ini hanya dihitung dari test yang dicentang di bawah, dan hanya kalau sudah ada hasilnya.</p>
     <div style="display:flex;gap:8px;margin-bottom:10px;">
       <button class="btn ghost small" style="width:auto;" onclick="selectTestsSetAll(true)">Select All</button>
@@ -1494,7 +1719,7 @@ function athleteMASSection(a){
         ${r.zones.map(z=>`
           <div class="chart-card" style="margin-bottom:10px;">
             <div style="display:flex;justify-content:space-between;align-items:center;">
-              <b style="font-size:13px;">${z.label}</b><span class="status-pill" style="background:#159A94;">${z.pct}</span>
+              <b style="font-size:13px;">${z.label}</b><span class="status-pill" style="background:#16A085;">${z.pct}</span>
             </div>
             <div class="info-grid" style="margin-top:10px;">
               <div class="info-item"><div class="k">Speed (m/s)</div><div class="v" style="font-size:13px;">${z.speedLo.toFixed(2)} – ${z.speedHi.toFixed(2)}</div></div>
@@ -1512,8 +1737,8 @@ function athleteMASSection(a){
         </div>
 
         <div class="no-print" style="display:flex;gap:8px;margin:14px 0;flex-wrap:wrap;">
-          <button class="btn secondary small" style="width:auto;" onclick="window.print()">🖨 Export PDF</button>
-          ${isStaff() ? `<button class="btn small" style="width:auto;" onclick="saveMASResult('${a.id}')">💾 Save Athlete Result</button>` : ""}
+          <button class="btn secondary small" style="width:auto;" onclick="window.print()">${icon('print',15)} Export PDF</button>
+          ${isStaff() ? `<button class="btn small" style="width:auto;" onclick="saveMASResult('${a.id}')">${icon('save',15)} Save Athlete Result</button>` : ""}
         </div>
       </div>
     `}
@@ -1567,7 +1792,7 @@ function drawMASChart(){
     type:"bar",
     data:{
       labels: zones.map(z=>`${z.label} (${z.pct})`),
-      datasets:[{ label:"Speed range (m/s)", data: zones.map(z=>[z.speedLo, z.speedHi]), backgroundColor:"#20B2AA", borderRadius:6 }]
+      datasets:[{ label:"Speed range (m/s)", data: zones.map(z=>[z.speedLo, z.speedHi]), backgroundColor:"#20C7B5", borderRadius:6 }]
     },
     options:{
       indexAxis:"y", responsive:true,
@@ -1600,7 +1825,7 @@ function viewPerformanceReport(){
   return `
     <div class="no-print" style="display:flex;gap:8px;margin-bottom:14px;flex-wrap:wrap;">
       <button class="btn ghost small" style="width:auto;" onclick="backFromReport()">← Kembali</button>
-      <button class="btn small" style="width:auto;" onclick="window.print()">🖨 Print / Simpan sebagai PDF</button>
+      <button class="btn small" style="width:auto;" onclick="window.print()">${icon('print',15)} Print / Simpan sebagai PDF</button>
       <button class="btn secondary small" style="width:auto;" onclick="exportReportCSV('${a.id}')">⬇ Export Excel (CSV)</button>
       <button class="btn secondary small" style="width:auto;" onclick="downloadReportHTML('${a.id}')">⬇ Download Laporan (HTML)</button>
       <button class="btn ghost small" style="width:auto;" onclick="openCompareReportPicker('${a.id}')">⚖️ Compare Athlete Reports</button>
@@ -1642,7 +1867,7 @@ function viewPerformanceReport(){
       <p class="helper"><b>Strengths:</b> ${an.strengths.length?an.strengths.map(c=>c.label).join(", "):"Belum ada kategori yang menonjol."}</p>
       <p class="helper"><b>Weaknesses:</b> ${an.weaknesses.length?an.weaknesses.map(c=>c.label).join(", "):"Tidak ada kategori lemah yang menonjol."}</p>
       <div class="field" style="background:var(--turquoise-tint);border-radius:10px;padding:10px 12px;margin:8px 0 14px;">
-        <b style="font-size:12px;">🎯 Recommended Training Focus</b>
+        <b style="font-size:12px;">${icon('target',14)} Recommended Training Focus</b>
         <p class="helper" style="margin:4px 0 0;">${perfRecommendation(an)}</p>
       </div>
 
@@ -1663,7 +1888,7 @@ function viewPerformanceReport(){
       <div class="field no-print">
         <textarea id="report-evaluation" rows="4" placeholder="Catatan evaluasi pelatih untuk periode ini..." oninput="state.reportEvaluationDraft=this.value">${state.reportEvaluationDraft||""}</textarea>
       </div>
-      ${isStaff() ? `<button class="btn ghost small no-print" style="width:auto;" onclick="saveCoachEvaluation('${a.id}')">💾 Simpan sebagai Catatan Coach</button>` : ""}
+      ${isStaff() ? `<button class="btn ghost small no-print" style="width:auto;" onclick="saveCoachEvaluation('${a.id}')">${icon('save',15)} Simpan sebagai Catatan Coach</button>` : ""}
     </div>
   `;
 }
@@ -1712,7 +1937,7 @@ function openCompareReportPicker(athleteId){
 function modalCompareReportPick(athleteId){
   const others = cache.athletes.filter(x=>x.id!==athleteId);
   return `
-    <div class="modal-head"><h3>Compare Athlete Reports</h3><button class="close-x" onclick="closeModal()">✕</button></div>
+    <div class="modal-head"><h3>Compare Athlete Reports</h3><button class="close-x" onclick="closeModal()">${icon('close',18)}</button></div>
     <div class="field"><label>Bandingkan dengan atlet</label>
       <select id="cmp-report-athlete">${others.map(o=>`<option value="${o.id}">${o.name} (${o.code||'-'})</option>`).join("")}</select>
     </div>
@@ -1732,7 +1957,7 @@ function perfCompareView(a){
   return `
     <div class="no-print" style="display:flex;gap:8px;margin-bottom:14px;flex-wrap:wrap;">
       <button class="btn ghost small" style="width:auto;" onclick="state.reportCompareId=null; render();">← Kembali ke Laporan</button>
-      <button class="btn small" style="width:auto;" onclick="window.print()">🖨 Print</button>
+      <button class="btn small" style="width:auto;" onclick="window.print()">${icon('print',15)} Print</button>
     </div>
     <div class="report-page" style="background:var(--card);border-radius:14px;padding:18px;">
       <h3>Compare Athlete Reports</h3>
@@ -1771,11 +1996,11 @@ function computeReadinessScore(v){
   return Math.round(Math.max(0, Math.min(100, score)));
 }
 function readinessCategory(score){
-  if(score>=90) return {label:"Excellent", color:"#1D9E75"};
-  if(score>=75) return {label:"Good", color:"#378ADD"};
-  if(score>=60) return {label:"Moderate", color:"#EF9F27"};
-  if(score>=40) return {label:"Low", color:"#E2841F"};
-  return {label:"Poor", color:"#E24B4A"};
+  if(score>=90) return {label:"Excellent", color:"#22C55E"};
+  if(score>=75) return {label:"Good", color:"#3B82F6"};
+  if(score>=60) return {label:"Moderate", color:"#F59E0B"};
+  if(score>=40) return {label:"Low", color:"#D97706"};
+  return {label:"Poor", color:"#EF4444"};
 }
 function sumLoadInRange(loads, fromMs, toMs){
   return loads.filter(l=>l.date>=fromMs && l.date<=toMs).reduce((s,l)=>s+l.load,0);
@@ -1828,13 +2053,13 @@ function computeACWR(loads, refDate){
 }
 // Kategori ACWR untuk WORKLOAD MONITORING (bukan diagnosis cedera).
 function acwrZone(ratio){
-  if(ratio==null) return { label:"Insufficient baseline data", tag:"N/A", color:"#5B6664" };
-  if(ratio > 3.00) return { label:"Extreme workload spike", tag:"EXTREME", color:"#B23A3A" };
-  if(ratio > 2.00) return { label:"Very high workload", tag:"VERY HIGH", color:"#E24B4A" };
-  if(ratio > 1.50) return { label:"High workload", tag:"HIGH", color:"#E2793A" };
-  if(ratio > 1.30) return { label:"Elevated workload — caution", tag:"CAUTION", color:"#EF9F27" };
-  if(ratio >= 0.80) return { label:"Controlled workload", tag:"CONTROLLED", color:"#1D9E75" };
-  return { label:"Low workload", tag:"LOW", color:"#378ADD" };
+  if(ratio==null) return { label:"Insufficient baseline data", tag:"N/A", color:"#A3ADB5" };
+  if(ratio > 3.00) return { label:"Extreme workload spike", tag:"EXTREME", color:"#B91C1C" };
+  if(ratio > 2.00) return { label:"Very high workload", tag:"VERY HIGH", color:"#EF4444" };
+  if(ratio > 1.50) return { label:"High workload", tag:"HIGH", color:"#F0843F" };
+  if(ratio > 1.30) return { label:"Elevated workload — caution", tag:"CAUTION", color:"#F59E0B" };
+  if(ratio >= 0.80) return { label:"Controlled workload", tag:"CONTROLLED", color:"#22C55E" };
+  return { label:"Low workload", tag:"LOW", color:"#3B82F6" };
 }
 const ACWR_RECOMMENDATIONS = {
   LOW: "Training load is relatively low. Consider maintaining or gradually progressing workload according to the training plan.",
@@ -1897,11 +2122,11 @@ function trainingFrequency(rows, fromMs, toMs){
 
 /* ---------------- RECOVERY SCORE (memakai skor readiness harian) ---------------- */
 function recoveryStatus(score){
-  if(score==null) return { label:"Belum ada data", color:"#5B6664" };
-  if(score>=80) return { label:"Good", color:"#1D9E75" };
-  if(score>=60) return { label:"Moderate", color:"#EF9F27" };
-  if(score>=40) return { label:"Poor", color:"#E2793A" };
-  return { label:"Very Poor", color:"#E24B4A" };
+  if(score==null) return { label:"Belum ada data", color:"#A3ADB5" };
+  if(score>=80) return { label:"Good", color:"#22C55E" };
+  if(score>=60) return { label:"Moderate", color:"#F59E0B" };
+  if(score>=40) return { label:"Poor", color:"#F0843F" };
+  return { label:"Very Poor", color:"#EF4444" };
 }
 
 /* ---------------- STRENGTH-SPECIFIC RECOMMENDATION ---------------- */
@@ -1931,14 +2156,14 @@ function goalProgressPct(g){
   return Math.round(Math.max(0, Math.min(100, (done/total)*100)));
 }
 function goalStatusColor(s){
-  return {"Not Started":"#5B6664","In Progress":"#378ADD","On Track":"#1D9E75","At Risk":"#E24B4A","Completed":"#1D9E75"}[s] || "#5B6664";
+  return {"Not Started":"#A3ADB5","In Progress":"#3B82F6","On Track":"#22C55E","At Risk":"#EF4444","Completed":"#22C55E"}[s] || "#A3ADB5";
 }
 // Asymmetry: threshold configurable, default 10%. Ini indikator, BUKAN diagnosis medis.
 function asymmetryZone(pct, threshold){
   const t = threshold || 10;
-  if(pct <= t) return {label:"Dalam batas normal", color:"#1D9E75"};
-  if(pct <= t*1.5) return {label:"Perlu dipantau", color:"#EF9F27"};
-  return {label:"Asimetri signifikan — pertimbangkan evaluasi lebih lanjut", color:"#E24B4A"};
+  if(pct <= t) return {label:"Dalam batas normal", color:"#22C55E"};
+  if(pct <= t*1.5) return {label:"Perlu dipantau", color:"#F59E0B"};
+  return {label:"Asimetri signifikan — pertimbangkan evaluasi lebih lanjut", color:"#EF4444"};
 }
 
 /* ==========================================================
@@ -2038,7 +2263,7 @@ function computeAlerts(){
   const order = {critical:0, warning:1, info:2};
   return alerts.sort((x,y)=>order[x.severity]-order[y.severity]);
 }
-function alertColor(sev){ return {critical:"#E24B4A", warning:"#EF9F27", info:"#378ADD"}[sev] || "#5B6664"; }
+function alertColor(sev){ return {critical:"#EF4444", warning:"#F59E0B", info:"#3B82F6"}[sev] || "#A3ADB5"; }
 function alertLabel(sev){ return {critical:"Critical", warning:"Warning", info:"Info"}[sev] || sev; }
 
 /* ==========================================================
@@ -2083,13 +2308,13 @@ const BODY_PARTS_BACK = [
 
 function bodySilhouette(){
   return `
-    <ellipse cx="100" cy="28" rx="16" ry="18" fill="#C7EBE8"/>
-    <rect x="80" y="46" width="40" height="14" rx="6" fill="#C7EBE8"/>
-    <path d="M60,60 Q100,50 140,60 L150,150 Q100,165 50,150 Z" fill="#C7EBE8"/>
-    <rect x="35" y="95" width="18" height="90" rx="9" fill="#C7EBE8"/>
-    <rect x="147" y="95" width="18" height="90" rx="9" fill="#C7EBE8"/>
-    <rect x="70" y="150" width="24" height="150" rx="11" fill="#C7EBE8"/>
-    <rect x="106" y="150" width="24" height="150" rx="11" fill="#C7EBE8"/>
+    <ellipse cx="100" cy="28" rx="16" ry="18" fill="#2A353B"/>
+    <rect x="80" y="46" width="40" height="14" rx="6" fill="#2A353B"/>
+    <path d="M60,60 Q100,50 140,60 L150,150 Q100,165 50,150 Z" fill="#2A353B"/>
+    <rect x="35" y="95" width="18" height="90" rx="9" fill="#2A353B"/>
+    <rect x="147" y="95" width="18" height="90" rx="9" fill="#2A353B"/>
+    <rect x="70" y="150" width="24" height="150" rx="11" fill="#2A353B"/>
+    <rect x="106" y="150" width="24" height="150" rx="11" fill="#2A353B"/>
   `;
 }
 
@@ -2151,22 +2376,23 @@ function render(){
         <span class="role-dot"></span>${ROLE_LABELS[role] || role}
         <button class="logout-btn" onclick="handleLogout()">Keluar</button>
       </div>
-      ${isAdmin() ? `<button class="backup-btn" onclick="openAdminPanel()" title="Admin">⚙</button>` : ""}
-      <button class="backup-btn" onclick="openModal('backup')">⬇</button>
+      ${isAdmin() ? `<button class="backup-btn" onclick="openAdminPanel()" title="Admin">${icon('settings',17)}</button>` : ""}
+      <button class="backup-btn" onclick="openModal('backup')" title="Backup">${icon('download',17)}</button>
+      <button class="backup-btn theme-toggle" onclick="cycleTheme()" title="Tema">${icon(effectiveTheme()==='light'?'sun':'moon',17)}</button>
     </header>
     <main id="main"></main>
     ${state.tab === "tests" && state.testsSection==='categories' && isStaff() ? `<button class="fab" onclick="openModal('addTest')">+</button>` : ""}
     ${state.tab === "tests" && state.testsSection==='battery' && isStaff() ? `<button class="fab" onclick="openModal('createBattery')">+</button>` : ""}
     ${state.tab === "masterplan" && !state.mpId && isStaff() ? `<button class="fab" onclick="openModal('addMasterplan')">+</button>` : ""}
     <nav class="bottom">
-      ${navBtn("dashboard","📊","Dashboard")}
-      ${navBtn("athletes","👤","Atlet")}
-      ${navBtn("compare","⚖️","Bandingkan")}
-      ${navBtn("calendar","📅","Kalender")}
-      ${navBtn("competitions","🏆","Kompetisi")}
-      ${navBtn("masterplan","🗓️","Master Plan")}
-      ${navBtn("tests","📋","Kategori Tes")}
-      ${navBtn("history","🕒","Riwayat")}
+      ${navBtn("dashboard","dashboard","Dashboard")}
+      ${navBtn("athletes","users","Atlet")}
+      ${navBtn("compare","compare","Bandingkan")}
+      ${navBtn("calendar","calendar","Kalender")}
+      ${navBtn("competitions","trophy","Kompetisi")}
+      ${navBtn("masterplan","target","Master Plan")}
+      ${navBtn("tests","clipboard","Kategori Tes")}
+      ${navBtn("history","clock","Riwayat")}
     </nav>
   `;
   renderMain();
@@ -2174,8 +2400,8 @@ function render(){
 }
 function openPerformanceReport(athleteId){ state.tab = "report"; state.reportAthleteId = athleteId; state.reportCompareId = null; state.reportEvaluationDraft = ""; render(); }
 function backFromReport(){ state.tab = "athletes"; render(); }
-function navBtn(key, icon, label){
-  return `<button class="${state.tab===key?'active':''}" onclick="setTab('${key}')"><span class="ic">${icon}</span><span>${label}</span></button>`;
+function navBtn(key, iconKey, label){
+  return `<button class="${state.tab===key?'active':''}" onclick="setTab('${key}')"><span class="ic">${icon(iconKey,20)}</span><span>${label}</span></button>`;
 }
 function setTab(t){
   state.tab = t; state.athleteId = null; state.mpId = null; render();
@@ -2433,7 +2659,7 @@ function viewComparison(){
       ${rows.map((r,i)=>`
         <div class="history-row">
           <div class="h-left"><b>#${i+1} ${r.a.name}</b><span>${r.a.sport} · ${r.a.position}</span></div>
-          <span class="badge" style="background:${r.score!=null?catColor(r.score>=90?'Elite':r.score>=75?'Good':r.score>=50?'Average':'Poor'):'#5B6664'}">${r.score!=null?r.score:'No Data'}</span>
+          <span class="badge" style="background:${r.score!=null?catColor(r.score>=90?'Elite':r.score>=75?'Good':r.score>=50?'Average':'Poor'):'#A3ADB5'}">${r.score!=null?r.score:'No Data'}</span>
         </div>
       `).join("")}
     `}
@@ -2449,7 +2675,7 @@ function drawComparisonChart(){
   const data = selected.map(a=>athletePerformanceScore(a.id) ?? 0);
   chartInstances["chart-compare"] = new Chart(canvas, {
     type:"bar",
-    data:{ labels, datasets:[{ label:"Performance Score", data, backgroundColor:"#20B2AA", borderRadius:6 }] },
+    data:{ labels, datasets:[{ label:"Performance Score", data, backgroundColor:"#20C7B5", borderRadius:6 }] },
     options:{ responsive:true, plugins:{legend:{display:false}}, scales:{ y:{min:0,max:100,ticks:{font:{size:10}}}, x:{ticks:{font:{size:10}}} } }
   });
 }
@@ -2467,7 +2693,7 @@ function viewCompetitionList(){
         ${comps.map(c=>`
           <div class="history-row" style="cursor:pointer;" onclick="setCompetition('${c.id}')">
             <div class="h-left"><b>${c.name}</b><span>${new Date(c.date).toLocaleDateString("id-ID",{day:"2-digit",month:"short",year:"numeric"})} · vs ${c.opponent||'-'} · ${c.venue||'-'}</span></div>
-            <span class="badge" style="background:#378ADD">${c.result || c.type || '-'}</span>
+            <span class="badge" style="background:#3B82F6">${c.result || c.type || '-'}</span>
           </div>
         `).join("")}
       </div>
@@ -2503,7 +2729,7 @@ function viewCompetitionDetail(){
 function modalAddCompetition(){
   const today = new Date().toISOString().slice(0,10);
   return `
-    <div class="modal-head"><h3>Tambah Kompetisi</h3><button class="close-x" onclick="closeModal()">✕</button></div>
+    <div class="modal-head"><h3>Tambah Kompetisi</h3><button class="close-x" onclick="closeModal()">${icon('close',18)}</button></div>
     <div class="field"><label>Nama kompetisi</label><input id="cp-name" placeholder="cth. Kejurnas Muay Thai 2026"/></div>
     <div class="field"><label>Tanggal</label><input id="cp-date" type="date" value="${today}"/></div>
     <div class="field-row">
@@ -2539,7 +2765,7 @@ async function submitCompetition(){
 function modalAddParticipant(competitionId){
   const athletes = loadDB(DB_KEYS.athletes);
   return `
-    <div class="modal-head"><h3>Tambah Partisipasi Atlet</h3><button class="close-x" onclick="closeModal()">✕</button></div>
+    <div class="modal-head"><h3>Tambah Partisipasi Atlet</h3><button class="close-x" onclick="closeModal()">${icon('close',18)}</button></div>
     <div class="field"><label>Atlet</label>
       <select id="pt-athlete">${athletes.map(a=>`<option value="${a.id}">${a.name}</option>`).join("")}</select>
     </div>
@@ -2582,7 +2808,7 @@ function buildCalendarEvents(){
   loadDB(DB_KEYS.goals).filter(g=>g.deadline).forEach(g=>events.push({ date:g.deadline, type:"Assessment", label:`Deadline goal: ${g.name} — ${athName(g.athleteId)}`, athleteId:g.athleteId }));
   return events;
 }
-const CAL_TYPE_COLOR = { Training:"#20B2AA", Testing:"#378ADD", Injury:"#E24B4A", Rehab:"#EF9F27", Competition:"#8B6FD1", Assessment:"#1D9E75" };
+const CAL_TYPE_COLOR = { Training:"#20C7B5", Testing:"#3B82F6", Injury:"#EF4444", Rehab:"#F59E0B", Competition:"#8B6FD1", Assessment:"#22C55E" };
 function changeCalendarMonth(delta){
   const d = new Date(state.calendarMonth);
   state.calendarMonth = new Date(d.getFullYear(), d.getMonth()+delta, 1).getTime();
@@ -2727,7 +2953,7 @@ function viewAuditLog(){
           <b>${l.table_name} · ${l.action}</b>
           <span>${l.user_email || 'system'} · ${new Date(l.created_at).toLocaleString("id-ID")}</span>
         </div>
-        <span class="badge" style="background:${l.action==='DELETE'?'#E24B4A':l.action==='UPDATE'?'#EF9F27':'#1D9E75'}">${l.action}</span>
+        <span class="badge" style="background:${l.action==='DELETE'?'#EF4444':l.action==='UPDATE'?'#F59E0B':'#22C55E'}">${l.action}</span>
       </div>
     `).join("")}
   `;
@@ -2754,7 +2980,7 @@ function viewScoringStandards(){
           <div class="chart-card">
             <div style="display:flex;justify-content:space-between;align-items:center;">
               <b style="font-size:13px;">${p.gender}${p.ageGroup?' · '+p.ageGroup:''}${p.sport?' · '+p.sport:''}${p.position?' · '+p.position:''}${p.level?' · '+p.level:''}</b>
-              <span class="badge" style="background:${p.isActive?'#1D9E75':'#5B6664'}">${p.isActive?'Aktif':'Nonaktif'}</span>
+              <span class="badge" style="background:${p.isActive?'#22C55E':'#A3ADB5'}">${p.isActive?'Aktif':'Nonaktif'}</span>
             </div>
             <p class="helper" style="margin:4px 0 8px;">${p.direction==='lower'?'Makin rendah makin baik':'Makin tinggi makin baik'} · unit: ${p.unit||'-'}</p>
             <div style="display:flex;gap:4px;flex-wrap:wrap;margin-bottom:10px;">
@@ -2764,7 +2990,7 @@ function viewScoringStandards(){
               <button class="btn ghost" style="flex:1;min-width:80px;" onclick="openModal('addScoringProfile','edit:${p.id}')">Edit</button>
               <button class="btn ghost" style="flex:1;min-width:80px;" onclick="duplicateScoringProfile('${p.id}')">Salin ke Gender Lain</button>
               <button class="btn ghost" style="flex:1;min-width:80px;" onclick="toggleScoringProfileActive('${p.id}', ${!p.isActive})">${p.isActive?'Nonaktifkan':'Aktifkan'}</button>
-              <span class="delete-link" style="align-self:center;" onclick="deleteScoringProfile('${p.id}')">🗑</span>
+              <span class="delete-link" style="align-self:center;" onclick="deleteScoringProfile('${p.id}')">${icon('trash',14)}</span>
             </div>
           </div>
         `;
@@ -2839,7 +3065,7 @@ function modalAddScoringProfile(payload){
     const parts = payload.split("|"); prefillTestId = parts[0]; prefillGender = parts[1];
   }
   return `
-    <div class="modal-head"><h3>${profile?'Edit':'Buat'} Standar Skor</h3><button class="close-x" onclick="closeModal()">✕</button></div>
+    <div class="modal-head"><h3>${profile?'Edit':'Buat'} Standar Skor</h3><button class="close-x" onclick="closeModal()">${icon('close',18)}</button></div>
     ${scoringProfileFormFields(profile, prefillTestId, prefillGender)}
     <div id="sp-err" class="err" style="display:none;margin-top:8px;"></div>
     <button class="btn" style="margin-top:10px;" onclick="submitScoringProfile(${profile?`'${profile.id}'`:'null'})">Simpan Standar</button>
@@ -2961,7 +3187,7 @@ function exportScoringStandardsCSV(){
 }
 function modalImportScoringStandards(){
   return `
-    <div class="modal-head"><h3>Import Standar Skor (CSV)</h3><button class="close-x" onclick="closeModal()">✕</button></div>
+    <div class="modal-head"><h3>Import Standar Skor (CSV)</h3><button class="close-x" onclick="closeModal()">${icon('close',18)}</button></div>
     <p class="helper">Header: <b>Test,Gender,Age Group,Category,Min,Max,Score,Direction,Unit</b> (Sport & Position opsional, tambahkan kolom sesuai kebutuhan). Direction: HIGHER_BETTER atau LOWER_BETTER.</p>
     <div class="field"><label>Pilih file CSV</label><input type="file" accept=".csv,text/csv" id="sci-file" onchange="handleScoringImportFile(event)"/></div>
     <div class="field"><label>atau tempel data CSV</label><textarea id="sci-text" rows="6" placeholder="Test,Gender,Age Group,Category,Min,Max,Score,Direction,Unit"></textarea></div>
@@ -3111,7 +3337,7 @@ function viewTestCategories(){
             <b style="font-size:13.5px;">${t.icon} ${t.name}</b>
             <div class="helper" style="margin:2px 0 0;">${t.unit} · ${t.direction==='higher'?'Higher is Better':'Lower is Better'} · ${cache.resultCountsByTest[t.id]||0} results</div>
           </div>
-          <span class="status-pill" style="background:${t.isActive?'#1D9E75':'#5B6664'};">${t.isActive?'Active':'Disabled'}</span>
+          <span class="status-pill" style="background:${t.isActive?'#22C55E':'#A3ADB5'};">${t.isActive?'Active':'Disabled'}</span>
         </div>
         <div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap;">
           <button class="btn ghost small" style="width:auto;" onclick="openModal('editTest','${t.id}')">Edit</button>
@@ -3132,11 +3358,11 @@ async function toggleTestActive(testId, newActive){
 function openDeleteTestConfirm(testId){ openModal("deleteTestConfirm", testId); }
 function modalDeleteTestConfirm(testId){
   const t = cache.allTests.find(x=>x.id===testId) || cache.tests.find(x=>x.id===testId);
-  if(!t) return `<div class="modal-head"><h3>Delete Test</h3><button class="close-x" onclick="closeModal()">✕</button></div>`;
+  if(!t) return `<div class="modal-head"><h3>Delete Test</h3><button class="close-x" onclick="closeModal()">${icon('close',18)}</button></div>`;
   const standardsCount = cache.scoringProfiles.filter(p=>p.testId===testId).length;
   const resultsCount = cache.resultCountsByTest[testId] || 0;
   return `
-    <div class="modal-head"><h3>Delete Test?</h3><button class="close-x" onclick="closeModal()">✕</button></div>
+    <div class="modal-head"><h3>Delete Test?</h3><button class="close-x" onclick="closeModal()">${icon('close',18)}</button></div>
     <p class="helper">Are you sure you want to delete this test?</p>
     <div class="info-grid" style="margin:10px 0;">
       <div class="info-item"><div class="k">Test Name</div><div class="v">${t.name}</div></div>
@@ -3146,7 +3372,7 @@ function modalDeleteTestConfirm(testId){
     </div>
     ${resultsCount>0 ? `
       <div class="field" style="background:var(--turquoise-tint);border-radius:10px;padding:10px 12px;">
-        <b style="font-size:12px;">⚠ This test has existing athlete results.</b>
+        <b style="font-size:12px;">${icon('warning',14)} This test has existing athlete results.</b>
         <p class="helper" style="margin:4px 0 0;">Pilih salah satu di bawah. Hasil atlet TIDAK akan terhapus kecuali kamu pilih opsi kedua secara eksplisit.</p>
       </div>
       <button class="btn" style="margin-top:12px;" onclick="confirmDeleteTest('${testId}', false)">Delete Test Only (simpan histori atlet)</button>
@@ -3174,9 +3400,9 @@ async function confirmDeleteTest(testId, deleteResultsToo){
 }
 function modalEditTest(testId){
   const t = (cache.allTests.length?cache.allTests:cache.tests).find(x=>x.id===testId);
-  if(!t) return `<div class="modal-head"><h3>Edit Test</h3><button class="close-x" onclick="closeModal()">✕</button></div>`;
+  if(!t) return `<div class="modal-head"><h3>Edit Test</h3><button class="close-x" onclick="closeModal()">${icon('close',18)}</button></div>`;
   return `
-    <div class="modal-head"><h3>Edit Test</h3><button class="close-x" onclick="closeModal()">✕</button></div>
+    <div class="modal-head"><h3>Edit Test</h3><button class="close-x" onclick="closeModal()">${icon('close',18)}</button></div>
     <div class="field"><label>Nama tes</label><input id="f-name" value="${t.name}"/></div>
     <div class="field"><label>Kategori</label>
       <select id="f-category">${cache.testCategories.map(c => `<option value="${c.id}" ${c.id===t.categoryId?'selected':''}>${c.icon} ${c.name}</option>`).join("")}</select>
@@ -3214,7 +3440,7 @@ async function submitEditTest(testId){
 }
 function modalAddTest(){
   return `
-    <div class="modal-head"><h3>Tambah Kategori Tes</h3><button class="close-x" onclick="closeModal()">✕</button></div>
+    <div class="modal-head"><h3>Tambah Kategori Tes</h3><button class="close-x" onclick="closeModal()">${icon('close',18)}</button></div>
     <div class="field"><label>Nama tes</label><input id="f-name" placeholder="Contoh: Push Up 1 Menit"/></div>
     <div class="field">
       <label>Kategori</label>
@@ -3282,7 +3508,7 @@ function viewTestBattery(){
                 const score = batterySessionScore(s.id);
                 return `<div class="history-row">
                   <div class="h-left"><b>${ath?ath.name:'Atlet'}</b><span>${new Date(s.date).toLocaleDateString("id-ID",{day:"2-digit",month:"short",year:"numeric"})}</span></div>
-                  <span class="badge" style="background:${score!=null?catColor(score>=90?'Elite':score>=75?'Good':score>=50?'Average':'Poor'):'#5B6664'}">${score!=null?score:'-'}</span>
+                  <span class="badge" style="background:${score!=null?catColor(score>=90?'Elite':score>=75?'Good':score>=50?'Average':'Poor'):'#A3ADB5'}">${score!=null?score:'-'}</span>
                 </div>`;
               }).join("")}
             </div>
@@ -3300,9 +3526,9 @@ function batterySessionScore(sessionId){
 }
 function modalCreateBattery(){
   const tests = loadDB(DB_KEYS.tests);
-  if(tests.length===0) return `<div class="modal-head"><h3>Buat Test Battery</h3><button class="close-x" onclick="closeModal()">✕</button></div><div class="chart-empty">Tambahkan kategori tes dulu sebelum membuat battery.</div>`;
+  if(tests.length===0) return `<div class="modal-head"><h3>Buat Test Battery</h3><button class="close-x" onclick="closeModal()">${icon('close',18)}</button></div><div class="chart-empty">Tambahkan kategori tes dulu sebelum membuat battery.</div>`;
   return `
-    <div class="modal-head"><h3>Buat Test Battery</h3><button class="close-x" onclick="closeModal()">✕</button></div>
+    <div class="modal-head"><h3>Buat Test Battery</h3><button class="close-x" onclick="closeModal()">${icon('close',18)}</button></div>
     <div class="field"><label>Nama battery</label><input id="bt-name" placeholder="cth. Speed & Power Battery"/></div>
     <div class="field"><label>Kategori</label><input id="bt-category" placeholder="cth. Speed & Power"/></div>
     <div class="field"><label>Pilih tes yang termasuk</label></div>
@@ -3337,7 +3563,7 @@ function modalRunBattery(batteryId){
   const today = new Date().toISOString().slice(0,10);
   if(!battery) return "";
   return `
-    <div class="modal-head"><h3>Jalankan ${battery.name}</h3><button class="close-x" onclick="closeModal()">✕</button></div>
+    <div class="modal-head"><h3>Jalankan ${battery.name}</h3><button class="close-x" onclick="closeModal()">${icon('close',18)}</button></div>
     <div class="field"><label>Atlet</label>
       <select id="rb-athlete">${athletes.map(a=>`<option value="${a.id}">${a.name}</option>`).join("")}</select>
     </div>
@@ -3433,7 +3659,7 @@ function setAthleteSection(s){
 
 function modalAddAthlete(){
   return `
-    <div class="modal-head"><h3>Tambah Atlet</h3><button class="close-x" onclick="closeModal()">✕</button></div>
+    <div class="modal-head"><h3>Tambah Atlet</h3><button class="close-x" onclick="closeModal()">${icon('close',18)}</button></div>
     <div class="photo-upload">
       <div class="avatar" id="new-athlete-avatar" style="width:64px;height:64px;">?</div>
       <div class="photo-actions">
@@ -3558,7 +3784,7 @@ function parseCSV(text){
 }
 function modalImportAthletes(){
   return `
-    <div class="modal-head"><h3>Import Atlet dari CSV</h3><button class="close-x" onclick="closeModal()">✕</button></div>
+    <div class="modal-head"><h3>Import Atlet dari CSV</h3><button class="close-x" onclick="closeModal()">${icon('close',18)}</button></div>
     <p class="helper">Header kolom: <b>name, sport, position, gender, age, height_cm, weight_kg, status</b>. Kolom <b>name</b> wajib diisi; kolom lain opsional.</p>
     <div class="field"><label>Pilih file CSV</label><input type="file" accept=".csv,text/csv" id="imp-file" onchange="handleImportFile(event)"/></div>
     <div class="field"><label>atau tempel data CSV di sini</label><textarea id="imp-text" rows="5" placeholder="name,sport,position,gender,age,height_cm,weight_kg,status"></textarea></div>
@@ -3723,7 +3949,7 @@ function athleteOverview(a){
       <div class="stat-card"><div class="label">CEDERA TERCATAT</div><div class="value" style="color:var(--poor)">${injuries.length}</div></div>
     </div>
     <div class="dist-row" style="display:flex;gap:6px;margin-bottom:18px;">
-      ${Object.entries(dist).map(([k,v])=>`<div style="flex:1;background:${catColor(k)};border-radius:10px;padding:10px 6px;text-align:center;color:white;"><div style="font-size:17px;font-weight:700;">${v}</div><div style="font-size:9.5px;">${k}</div></div>`).join("")}
+      ${Object.entries(dist).map(([k,v])=>`<div style="flex:1;background:${catColor(k)};border-radius:10px;padding:10px 6px;text-align:center;color:#06211D;"><div style="font-size:17px;font-weight:700;">${v}</div><div style="font-size:9.5px;">${k}</div></div>`).join("")}
     </div>
     ${isStaff() ? `<button class="btn" onclick="openModal('addAssessment', '${a.id}')">+ Input Hasil Tes Baru</button>` : ""}
     ${isAdmin() ? `
@@ -3735,7 +3961,7 @@ function athleteOverview(a){
         </div>
         <p class="helper" style="margin-top:4px;">${a.userId ? 'Sudah tertaut ke akun user ID di atas.' : 'Belum tertaut ke akun manapun.'}</p>
       </div>
-      <span class="delete-link" style="display:block;margin-top:18px;" onclick="deleteAthlete('${a.id}','${a.name.replace(/'/g,"\\'")}')">🗑 Hapus Atlet Ini (beserta seluruh riwayatnya)</span>
+      <span class="delete-link" style="display:block;margin-top:18px;" onclick="deleteAthlete('${a.id}','${a.name.replace(/'/g,"\\'")}')">${icon('trash',14)} Hapus Atlet Ini (beserta seluruh riwayatnya)</span>
     ` : ""}
   `;
 }
@@ -3801,7 +4027,7 @@ function athletePerformanceSection(a){
       return `
         <div class="history-row">
           <div class="h-left">
-            <b>${new Date(r.date).toLocaleDateString("id-ID",{day:"2-digit",month:"short",year:"numeric"})} ${isPB?'<span class="badge" style="background:#1D9E75;margin-left:4px;">PB</span>':''}</b>
+            <b>${new Date(r.date).toLocaleDateString("id-ID",{day:"2-digit",month:"short",year:"numeric"})} ${isPB?'<span class="badge" style="background:#22C55E;margin-left:4px;">PB</span>':''}</b>
             <span>Result: ${r.rawScore} ${test.unit}${r.score!=null?` · Score: ${r.score}/100`:' · Belum ada skor'}</span>
           </div>
           ${r.category ? `<span class="badge" style="background:${catColor(r.category)}">${r.category}</span>` : ""}
@@ -3817,10 +4043,10 @@ function drawProfileChart(){
   const rows = loadDB(DB_KEYS.assessments).filter(a=>a.athleteId===state.athleteId && a.testId===test.id).sort((a,b)=>a.date-b.date);
   const labels = rows.map(a=>new Date(a.date).toLocaleDateString("id-ID",{day:"2-digit",month:"short"}));
   const data = rows.map(a=>a.rawScore);
-  const pointColors = rows.map(a=>a.category ? catColor(a.category) : "#5B6664");
+  const pointColors = rows.map(a=>a.category ? catColor(a.category) : "#A3ADB5");
   chartInstances["chart-profile"] = new Chart(canvas, {
     type:"line",
-    data:{ labels, datasets:[{ label:`${test.name} (${test.unit})`, data, borderColor:"#20B2AA", backgroundColor:"rgba(32,178,170,0.08)", pointBackgroundColor:pointColors, pointRadius:5, pointHoverRadius:6, tension:0.25, fill:true }] },
+    data:{ labels, datasets:[{ label:`${test.name} (${test.unit})`, data, borderColor:"#20C7B5", backgroundColor:"rgba(32,199,181,0.1)", pointBackgroundColor:pointColors, pointRadius:5, pointHoverRadius:6, tension:0.25, fill:true }] },
     options:{ responsive:true, plugins:{legend:{display:false}}, scales:{ y:{ticks:{font:{size:10}}}, x:{ticks:{font:{size:10}}} } }
   });
 }
@@ -3833,7 +4059,7 @@ function drawScoreTrendChart(){
   const data = rows.map(a=>a.score);
   chartInstances["chart-score-trend"] = new Chart(canvas, {
     type:"line",
-    data:{ labels, datasets:[{ label:"Score", data, borderColor:"#159A94", backgroundColor:"rgba(21,154,148,0.1)", pointRadius:4, tension:0.25, fill:true }] },
+    data:{ labels, datasets:[{ label:"Score", data, borderColor:"#16A085", backgroundColor:"rgba(32,199,181,0.12)", pointRadius:4, tension:0.25, fill:true }] },
     options:{ responsive:true, plugins:{legend:{display:false}}, scales:{ y:{min:0,max:100,ticks:{font:{size:10}}}, x:{ticks:{font:{size:10}}} } }
   });
 }
@@ -3862,7 +4088,7 @@ function athleteImprovementSection(a){
       <div class="ba-card"><div class="k">After</div><div class="v">${after.rawScore}</div></div>
       <div class="ba-card ${improving?'improve':'decline'}"><div class="k">Improvement</div><div class="v">${improving?'+':''}${pct.toFixed(1)}%</div></div>
     </div>
-    ${!improving ? `<div class="err" style="margin-bottom:12px;">⚠ Performa menurun dibanding tes pertama.</div>` : ""}
+    ${!improving ? `<div class="err" style="margin-bottom:12px;">${icon('warning',14)} Performa menurun dibanding tes pertama.</div>` : ""}
     <div class="chart-card">
       <h3>Grafik Perkembangan (Assessment 1 → ${rows.length})</h3>
       <canvas id="chart-improvement" height="180"></canvas>
@@ -3878,7 +4104,7 @@ function drawImprovementChart(){
   const data = rows.map(a=>a.rawScore);
   chartInstances["chart-improvement"] = new Chart(canvas, {
     type:"line",
-    data:{ labels, datasets:[{ label:`${test.name}`, data, borderColor:"#159A94", backgroundColor:"rgba(21,154,148,0.1)", pointRadius:5, tension:0.2, fill:true }] },
+    data:{ labels, datasets:[{ label:`${test.name}`, data, borderColor:"#16A085", backgroundColor:"rgba(32,199,181,0.12)", pointRadius:5, tension:0.2, fill:true }] },
     options:{ responsive:true, plugins:{ legend:{display:false}, tooltip:{ callbacks:{ label:(ctx)=>{
       const idx = ctx.dataIndex; const val = ctx.raw; const prev = idx>0 ? data[idx-1] : null;
       if(prev===null) return `Skor: ${val} ${test.unit}`;
@@ -3911,8 +4137,8 @@ function drawPerformanceRadarChart(){
     data:{
       labels: profile.labels,
       datasets:[
-        { label:"Current", data: profile.current.map(v=>v??0), borderColor:"#20B2AA", backgroundColor:"rgba(32,178,170,0.2)", pointRadius:3 },
-        { label:"Previous", data: profile.previous.map(v=>v??0), borderColor:"#B9C4C2", backgroundColor:"rgba(185,196,194,0.15)", pointRadius:3 }
+        { label:"Current", data: profile.current.map(v=>v??0), borderColor:"#20C7B5", backgroundColor:"rgba(32,199,181,0.22)", pointRadius:3 },
+        { label:"Previous", data: profile.previous.map(v=>v??0), borderColor:"#6B7680", backgroundColor:"rgba(107,118,128,0.2)", pointRadius:3 }
       ]
     },
     options:{ responsive:true, scales:{ r:{ min:0, max:100, ticks:{stepSize:25, font:{size:9}}, pointLabels:{font:{size:10}} } }, plugins:{ legend:{position:"bottom", labels:{font:{size:10}}} } }
@@ -4064,11 +4290,11 @@ function injuryFilters(){
 }
 function statusColor(status){
   return {
-    Aktif:"#E24B4A", Recovering:"#378ADD", Rehab:"#EF9F27", "Return to Training":"#8B6FD1",
-    "Return to Play":"#159A94", Sembuh:"#1D9E75", Kronis:"#5B6664", Closed:"#5B6664"
-  }[status] || "#5B6664";
+    Aktif:"#EF4444", Recovering:"#3B82F6", Rehab:"#F59E0B", "Return to Training":"#8B6FD1",
+    "Return to Play":"#16A085", Sembuh:"#22C55E", Kronis:"#A3ADB5", Closed:"#A3ADB5"
+  }[status] || "#A3ADB5";
 }
-function severityColor(sev){ return {Ringan:"#EF9F27", Sedang:"#E2841F", Berat:"#E24B4A"}[sev] || "#5B6664"; }
+function severityColor(sev){ return {Ringan:"#F59E0B", Sedang:"#D97706", Berat:"#EF4444"}[sev] || "#A3ADB5"; }
 
 function injuryHistoryTable(injuries){
   let rows = injuries;
@@ -4100,7 +4326,7 @@ function modalInjuryDetail(injuryId){
   ].sort((a,b)=>a.date-b.date);
 
   return `
-    <div class="modal-head"><h3>${i.bodyPartLabel} · ${i.injuryType}</h3><button class="close-x" onclick="closeModal()">✕</button></div>
+    <div class="modal-head"><h3>${i.bodyPartLabel} · ${i.injuryType}</h3><button class="close-x" onclick="closeModal()">${icon('close',18)}</button></div>
 
     <div class="info-grid">
       <div class="info-item"><div class="k">Tanggal cedera</div><div class="v">${new Date(i.date).toLocaleDateString("id-ID",{day:"2-digit",month:"short",year:"numeric"})}</div></div>
@@ -4129,7 +4355,7 @@ function modalInjuryDetail(injuryId){
     ${timeline.map(t=>`
       <div class="history-row">
         <div class="h-left"><b>${new Date(t.date).toLocaleDateString("id-ID",{day:"2-digit",month:"short",year:"numeric"})}</b><span>${t.label}</span></div>
-        <span class="badge" style="background:${t.kind==='injury'?'#E24B4A':'#378ADD'}">${t.kind==='injury'?'Cedera':'Rehab'}</span>
+        <span class="badge" style="background:${t.kind==='injury'?'#EF4444':'#3B82F6'}">${t.kind==='injury'?'Cedera':'Rehab'}</span>
       </div>
     `).join("")}
 
@@ -4152,7 +4378,7 @@ function modalAddRehabLog(payload){
   const [injuryId, athleteId] = payload.split("|");
   const today = new Date().toISOString().slice(0,10);
   return `
-    <div class="modal-head"><h3>Catat Sesi Rehab</h3><button class="close-x" onclick="closeModal()">✕</button></div>
+    <div class="modal-head"><h3>Catat Sesi Rehab</h3><button class="close-x" onclick="closeModal()">${icon('close',18)}</button></div>
     <div class="field"><label>Tanggal</label><input id="rh-date" type="date" value="${today}"/></div>
     <div class="field"><label>Fase rehab</label>
       <select id="rh-phase">
@@ -4217,7 +4443,7 @@ function athleteAsymmetrySection(a){
 function modalAddAsymmetry(athleteId){
   const today = new Date().toISOString().slice(0,10);
   return `
-    <div class="modal-head"><h3>Cek Asymmetry</h3><button class="close-x" onclick="closeModal()">✕</button></div>
+    <div class="modal-head"><h3>Cek Asymmetry</h3><button class="close-x" onclick="closeModal()">${icon('close',18)}</button></div>
     <div class="field"><label>Nama tes</label><input id="asy-name" placeholder="cth. Single Leg Broad Jump"/></div>
     <div class="field"><label>Satuan</label><input id="asy-unit" placeholder="cth. cm, kg"/></div>
     <div class="field-row">
@@ -4252,7 +4478,7 @@ async function submitAsymmetry(athleteId){
 /* ---------------- COACH NOTES ---------------- */
 function athleteNotesSection(a){
   const rows = loadDB(DB_KEYS.notes).filter(x=>x.athleteId===a.id).sort((x,y)=>y.date-x.date);
-  const catColorMap = {Performance:"#378ADD", Training:"#20B2AA", Behavior:"#8B6FD1", Recovery:"#1D9E75", Injury:"#E24B4A", Competition:"#EF9F27", General:"#5B6664"};
+  const catColorMap = {Performance:"#3B82F6", Training:"#20C7B5", Behavior:"#8B6FD1", Recovery:"#22C55E", Injury:"#EF4444", Competition:"#F59E0B", General:"#A3ADB5"};
   return `
     ${isStaff() ? `<button class="btn" onclick="openModal('addNote','${a.id}')">+ Tambah Catatan</button>` : ""}
     ${rows.length===0 ? `<div class="chart-empty" style="margin-top:14px;">Belum ada catatan coach.</div>` : rows.map(n=>`
@@ -4262,7 +4488,7 @@ function athleteNotesSection(a){
           <span>${n.note}</span>
           ${n.followUp ? `<span style="color:var(--muted);">Follow-up: ${new Date(n.followUp).toLocaleDateString("id-ID",{day:"2-digit",month:"short",year:"numeric"})}</span>` : ""}
         </div>
-        <span class="badge" style="background:${catColorMap[n.category]||'#5B6664'}">${n.category}</span>
+        <span class="badge" style="background:${catColorMap[n.category]||'#A3ADB5'}">${n.category}</span>
       </div>
     `).join("")}
   `;
@@ -4272,7 +4498,7 @@ function modalAddNote(payload){
   const defaultCategory = (payload && typeof payload==='object') ? payload.category : null;
   const today = new Date().toISOString().slice(0,10);
   return `
-    <div class="modal-head"><h3>Tambah Catatan Coach</h3><button class="close-x" onclick="closeModal()">✕</button></div>
+    <div class="modal-head"><h3>Tambah Catatan Coach</h3><button class="close-x" onclick="closeModal()">${icon('close',18)}</button></div>
     <div class="field"><label>Tanggal</label><input id="nt-date" type="date" value="${today}"/></div>
     <div class="field"><label>Kategori</label>
       <select id="nt-category">${NOTE_CATEGORIES.map(c=>`<option ${c===defaultCategory?'selected':''}>${c}</option>`).join("")}</select>
@@ -4345,7 +4571,7 @@ function drawReadinessChart(){
   const data = rows.map(r=>r.score);
   chartInstances["chart-readiness"] = new Chart(canvas, {
     type:"line",
-    data:{ labels, datasets:[{ label:"Readiness Score", data, borderColor:"#20B2AA", backgroundColor:"rgba(32,178,170,0.08)", pointRadius:3, tension:0.25, fill:true }] },
+    data:{ labels, datasets:[{ label:"Readiness Score", data, borderColor:"#20C7B5", backgroundColor:"rgba(32,199,181,0.1)", pointRadius:3, tension:0.25, fill:true }] },
     options:{ responsive:true, plugins:{legend:{display:false}}, scales:{ y:{min:0,max:100,ticks:{font:{size:10}}}, x:{ticks:{font:{size:10}}} } }
   });
 }
@@ -4356,7 +4582,7 @@ function modalAddReadiness(athleteId){
       <select id="${id}"><option value="1">1</option><option value="2">2</option><option value="3" selected>3</option><option value="4">4</option><option value="5">5</option></select>
     </div>`;
   return `
-    <div class="modal-head"><h3>Input Daily Readiness</h3><button class="close-x" onclick="closeModal()">✕</button></div>
+    <div class="modal-head"><h3>Input Daily Readiness</h3><button class="close-x" onclick="closeModal()">${icon('close',18)}</button></div>
     <div class="field"><label>Tanggal</label><input id="rd-date" type="date" value="${today}"/></div>
     <div class="field"><label>Durasi tidur (jam)</label><input id="rd-sleepdur" type="number" step="0.5" placeholder="cth. 7.5"/></div>
     ${scaleOptions("rd-sleepq","Kualitas tidur")}
@@ -4498,8 +4724,8 @@ function athleteLoadSection(a){
             <span>${r.duration} menit × RPE ${r.rpe}${r.volumeLoad>0?` · Volume ${Math.round(r.volumeLoad)} kg`:""}</span>
           </div>
           <div style="display:flex;align-items:center;gap:8px;">
-            <span class="badge" style="background:#159A94">${Math.round(r.load)} AU</span>
-            ${isStaff() ? `<span class="delete-link" style="margin:0;" onclick="deleteTrainingSession('${r.id}','${a.id}')" title="Hapus sesi ini">🗑</span>` : ""}
+            <span class="badge" style="background:#16A085">${Math.round(r.load)} AU</span>
+            ${isStaff() ? `<span class="delete-link" style="margin:0;" onclick="deleteTrainingSession('${r.id}','${a.id}')" title="Hapus sesi ini">${icon('trash',14)}</span>` : ""}
           </div>
         </div>
       `).join("")}
@@ -4526,7 +4752,7 @@ function drawLoadChart(){
   const data = rows.map(r=>Math.round(r.load));
   chartInstances["chart-load"] = new Chart(canvas, {
     type:"bar",
-    data:{ labels, datasets:[{ label:"Session Load (AU)", data, backgroundColor:"#20B2AA" }] },
+    data:{ labels, datasets:[{ label:"Session Load (AU)", data, backgroundColor:"#20C7B5" }] },
     options:{ responsive:true, plugins:{legend:{display:false}}, scales:{ y:{ticks:{font:{size:10}}}, x:{ticks:{font:{size:10}}} } }
   });
 }
@@ -4557,7 +4783,7 @@ function modalAddTrainingSession(athleteId){
   const sessionLoad = (Number(d.duration)||0) * (Number(d.rpe)||0);
   const totalVolume = d.rows.reduce((s,r)=>s+((Number(r.sets)||0)*(Number(r.reps)||0)*(Number(r.load)||0)),0);
   return `
-    <div class="modal-head"><h3>Catat Sesi Latihan</h3><button class="close-x" onclick="closeModal()">✕</button></div>
+    <div class="modal-head"><h3>Catat Sesi Latihan</h3><button class="close-x" onclick="closeModal()">${icon('close',18)}</button></div>
     <div class="field"><label>Tanggal</label><input type="date" value="${d.date}" onchange="tlDraft.date=this.value"/></div>
     <div class="field"><label>Jenis Latihan</label>
       <select onchange="changeTlType(this.value)">
@@ -4684,7 +4910,7 @@ function athleteGoalsSection(a){
 }
 function modalAddGoal(athleteId){
   return `
-    <div class="modal-head"><h3>Tambah Goal</h3><button class="close-x" onclick="closeModal()">✕</button></div>
+    <div class="modal-head"><h3>Tambah Goal</h3><button class="close-x" onclick="closeModal()">${icon('close',18)}</button></div>
     <div class="field"><label>Nama goal</label><input id="gl-name" type="text" placeholder="cth. Sprint 30m"/></div>
     <div class="field"><label>Kategori</label><input id="gl-category" type="text" placeholder="cth. Speed"/></div>
     <div class="field"><label>Unit</label><input id="gl-unit" type="text" placeholder="cth. detik, kg, cm"/></div>
@@ -4768,9 +4994,9 @@ async function removeAthletePhoto(athleteId){
 /* ---------------- INPUT HASIL TES (modal, dari halaman atlet) ---------------- */
 function modalAddAssessment(athleteId){
   const tests = loadDB(DB_KEYS.tests);
-  if(tests.length===0) return `<div class="modal-head"><h3>Input Hasil Tes</h3><button class="close-x" onclick="closeModal()">✕</button></div><div class="chart-empty">Tambahkan kategori tes dulu di tab "Kategori Tes".</div>`;
+  if(tests.length===0) return `<div class="modal-head"><h3>Input Hasil Tes</h3><button class="close-x" onclick="closeModal()">${icon('close',18)}</button></div><div class="chart-empty">Tambahkan kategori tes dulu di tab "Kategori Tes".</div>`;
   return `
-    <div class="modal-head"><h3>Input Hasil Tes</h3><button class="close-x" onclick="closeModal()">✕</button></div>
+    <div class="modal-head"><h3>Input Hasil Tes</h3><button class="close-x" onclick="closeModal()">${icon('close',18)}</button></div>
     <div class="field">
       <label>Kategori tes</label>
       <select id="in-test">${tests.map(t=>`<option value="${t.id}">${t.icon} ${t.name} (${t.unit})</option>`).join("")}</select>
@@ -4857,7 +5083,7 @@ function viewHistory(){
             <span>${dateStr} · ${a.rawScore} ${t?t.unit:""}</span>
           </div>
           <span class="badge" style="background:${catColor(a.category)}">${a.category}</span>
-          ${isStaff() ? `<span class="delete-link" style="margin-left:8px;" onclick="deleteHistoryEntry('${a.id}','${a.assessmentId||''}')">🗑</span>` : ""}
+          ${isStaff() ? `<span class="delete-link" style="margin-left:8px;" onclick="deleteHistoryEntry('${a.id}','${a.assessmentId||''}')">${icon('trash',14)}</span>` : ""}
         </div>
       `;
     }).join("")}
@@ -4878,7 +5104,7 @@ async function deleteHistoryEntry(perfResultId, assessmentId){
 /* ---------------- CADANGAN DATA ---------------- */
 function modalBackup(){
   return `
-    <div class="modal-head"><h3>Cadangan Data</h3><button class="close-x" onclick="closeModal()">✕</button></div>
+    <div class="modal-head"><h3>Cadangan Data</h3><button class="close-x" onclick="closeModal()">${icon('close',18)}</button></div>
     <p style="font-size:12.5px;color:var(--muted);margin-top:0;">Data aplikasi sekarang tersimpan terpusat di Supabase (bukan di HP ini saja), otomatis tersinkron di semua perangkat yang login. Tombol di bawah hanya untuk mengunduh salinan/arsip.</p>
     <button class="btn" onclick="exportBackup()">⬇ Unduh Salinan Data (.json)</button>
     <div class="helper" style="margin-top:14px;">Backup basis data sesungguhnya (termasuk kemungkinan pulih ke titik waktu tertentu) dikelola otomatis oleh Supabase di dashboard project-mu.</div>
@@ -5200,7 +5426,7 @@ function modalEditPhase(payload){
     volumeTarget:"Moderate", intensityTarget:"Moderate", recoveryTarget:"", deloadWeek:false };
   const weeksVal = ph ? (ph.weekEnd-ph.weekStart+1) : "";
   return `
-    <div class="modal-head"><h3>${ph?"Edit":"Tambah"} Phase</h3><button class="close-x" onclick="closeModal()">✕</button></div>
+    <div class="modal-head"><h3>${ph?"Edit":"Tambah"} Phase</h3><button class="close-x" onclick="closeModal()">${icon('close',18)}</button></div>
     <div class="field"><label>Phase Name</label><input id="ph-label" value="${d.label}" placeholder="cth. Strength Endurance"/></div>
     <div class="field"><label>Phase Type</label>
       <select id="ph-type">${PHASE_TYPE_OPTIONS.map(t=>`<option value="${t}" ${d.phaseType===t?'selected':''}>${t}</option>`).join("")}</select>
@@ -5231,7 +5457,7 @@ function modalEditPhase(payload){
 }
 
 /* ---- Timeline visual (semua phase dalam satu bar, proporsional ke durationWeeks) ---- */
-const TIMELINE_COLORS = ["#20B2AA","#159A94","#378ADD","#1D9E75","#EF9F27","#E2841F","#E24B4A","#7A6FF0","#159A94","#20B2AA","#5B6664"];
+const TIMELINE_COLORS = ["#20C7B5","#16A085","#3B82F6","#22C55E","#F59E0B","#D97706","#EF4444","#7A6FF0","#16A085","#20C7B5","#A3ADB5"];
 function phaseTimeline(mp, wk){
   const total = mp.durationWeeks;
   const phases = [...mp.phases].sort((a,b)=>a.weekStart-b.weekStart);
@@ -5331,7 +5557,7 @@ function modalWeekLoad(payload){
   const d = existing ? JSON.parse(JSON.stringify(existing)) : emptyWeekLoad(wk);
   const phase = phaseForWeek(mp, wk);
   return `
-    <div class="modal-head"><h3>Volume & Intensity — Minggu ${wk}</h3><button class="close-x" onclick="closeModal()">✕</button></div>
+    <div class="modal-head"><h3>Volume & Intensity — Minggu ${wk}</h3><button class="close-x" onclick="closeModal()">${icon('close',18)}</button></div>
     <p class="helper" style="margin-top:-6px;">${weekDateRange(mp,wk)||''}${phase?` · Phase: ${phase.label}`:''}</p>
 
     <div class="load-type-card">
@@ -5542,7 +5768,7 @@ function dpPlanBody(mp, plan, dateStr, compact){
     ${plan.status==='completed' ? `
       <div class="helper" style="margin-top:8px;">Actual: <b>${plan.actualDuration||0} menit</b> · Session RPE <b>${plan.actualRPE||'-'}</b></div>
     ` : `
-      ${blocks.length>0 ? `<button class="btn" style="margin-top:10px;" onclick="openCompleteSessionModal('${mp.id}','${dateStr}')">✓ Tandai Sesi Selesai</button>` : ""}
+      ${blocks.length>0 ? `<button class="btn" style="margin-top:10px;" onclick="openCompleteSessionModal('${mp.id}','${dateStr}')">${icon('check',15)} Tandai Sesi Selesai</button>` : ""}
     `}
   `;
 }
@@ -5708,12 +5934,12 @@ function modalDuplicateProgram(payload){
   const srcMp = list.find(m=>m.id===payload.mpId);
   const srcPlan = srcMp ? getDailyPlan(srcMp, payload.dateStr) : null;
   if(!srcMp || !srcPlan){
-    return `<div class="modal-head"><h3>Duplicate Program</h3><button class="close-x" onclick="closeModal()">✕</button></div><p class="helper">Program tidak ditemukan.</p>`;
+    return `<div class="modal-head"><h3>Duplicate Program</h3><button class="close-x" onclick="closeModal()">${icon('close',18)}</button></div><p class="helper">Program tidak ditemukan.</p>`;
   }
   const targetMp = list.find(m=>m.id===dupDraft.targetMpId) || srcMp;
   const weekOpts = Array.from({length: targetMp.durationWeeks||1}, (_,i)=>i+1);
   return `
-    <div class="modal-head"><h3>📋 Duplicate Program</h3><button class="close-x" onclick="closeModal()">✕</button></div>
+    <div class="modal-head"><h3>📋 Duplicate Program</h3><button class="close-x" onclick="closeModal()">${icon('close',18)}</button></div>
     <p class="helper">Original Program: <b>${srcPlan.title || "Sesi Latihan"}</b> — ${dpFmtDate(srcPlan.date)}</p>
     <div class="field"><label>New Program Name</label><input type="text" id="dup-name" value="${dupDraft.newName}" oninput="dupDraft.newName=this.value"/></div>
     <div class="field"><label>Athlete (Master Plan tujuan)</label>
@@ -5886,9 +6112,9 @@ function mpDailySection(mp, wk){
       ${dpPlanBody(mp, plan, selected, false)}
       ${plan && isStaff() ? `
         <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px;">
-          <button class="btn secondary small" style="width:auto;" onclick="openDailyPlanBuilder('${mp.id}','${selected}')">✏️ Edit Program</button>
+          <button class="btn secondary small" style="width:auto;" onclick="openDailyPlanBuilder('${mp.id}','${selected}')">${icon('edit',15)} Edit Program</button>
           <button class="btn ghost small" style="width:auto;" onclick="openDuplicateProgramModal('${mp.id}','${selected}')">📋 Duplicate Program</button>
-          <button class="btn danger small" style="width:auto;" onclick="deleteDailyPlan('${mp.id}','${selected}')">🗑 Delete</button>
+          <button class="btn danger small" style="width:auto;" onclick="deleteDailyPlan('${mp.id}','${selected}')">${icon('trash',15)} Delete</button>
         </div>
       ` : ""}
     </div>
@@ -5985,7 +6211,7 @@ function dpExerciseFields(ex, blockIdx, i, category){
 function modalEditDailyPlan(payload){
   const d = dpDraft;
   return `
-    <div class="modal-head"><h3>✏️ Edit Program — ${dpFmtDate(d.date)}</h3><button class="close-x" onclick="closeModal()">✕</button></div>
+    <div class="modal-head"><h3>${icon('edit',16)} Edit Program — ${dpFmtDate(d.date)}</h3><button class="close-x" onclick="closeModal()">${icon('close',18)}</button></div>
     ${dpHistoryBlock(d)}
     <div class="field" style="display:flex;align-items:center;gap:8px;">
       <input type="checkbox" id="dp-rest" ${d.isRestDay?'checked':''} onchange="dpToggleRestDay()"/>
@@ -6006,7 +6232,7 @@ function modalEditDailyPlan(payload){
             </div>
             <div style="display:flex;gap:16px;justify-content:center;margin-top:14px;">
               <span style="color:var(--turquoise-dark);font-weight:600;font-size:12.5px;cursor:pointer;" onclick="dpDuplicateExercise(${bi},${i})">📋 Duplicate</span>
-              <span class="delete-link" style="margin:0;display:inline;" onclick="dpRemoveExercise(${bi},${i})">🗑 Hapus item</span>
+              <span class="delete-link" style="margin:0;display:inline;" onclick="dpRemoveExercise(${bi},${i})">${icon('trash',13)} Hapus item</span>
             </div>
           </div>
         `).join("")}
@@ -6067,13 +6293,13 @@ function modalCompleteSession(payload){
   const list = loadMasterplans();
   const mp = list.find(m=>m.id===payload.mpId);
   const plan = mp ? getDailyPlan(mp, payload.date) : null;
-  if(!plan) return `<div class="modal-head"><h3>Selesaikan Sesi</h3><button class="close-x" onclick="closeModal()">✕</button></div><p>Rencana tidak ditemukan.</p>`;
+  if(!plan) return `<div class="modal-head"><h3>Selesaikan Sesi</h3><button class="close-x" onclick="closeModal()">${icon('close',18)}</button></div><p>Rencana tidak ditemukan.</p>`;
   // Estimasi awal dari planned data (durasi warm up/conditioning + rata2 RPE target)
   const allEx = plan.blocks.flatMap(b=>b.exercises);
   const rpeVals = allEx.map(e=>Number(e.rpeTarget)).filter(v=>v>0);
   const estRpe = rpeVals.length ? Math.round(rpeVals.reduce((a,b)=>a+b,0)/rpeVals.length) : "";
   return `
-    <div class="modal-head"><h3>Selesaikan Sesi</h3><button class="close-x" onclick="closeModal()">✕</button></div>
+    <div class="modal-head"><h3>Selesaikan Sesi</h3><button class="close-x" onclick="closeModal()">${icon('close',18)}</button></div>
     <p class="helper">${plan.title} · ${dpFmtDate(plan.date)}</p>
     <div class="field-row">
       <div class="field"><label>Durasi Aktual (menit)</label><input id="cs-duration" type="number" min="1" max="300" placeholder="cth. 90"/></div>
@@ -6177,7 +6403,7 @@ function setMpSection(s){ state.mpSection=s; render(); }
 function modalAddMasterplan(){
   const athletes = loadDB(DB_KEYS.athletes);
   return `
-    <div class="modal-head"><h3>Buat Master Plan</h3><button class="close-x" onclick="closeModal()">✕</button></div>
+    <div class="modal-head"><h3>Buat Master Plan</h3><button class="close-x" onclick="closeModal()">${icon('close',18)}</button></div>
     <div class="field"><label>Master Plan Name</label><input id="mp-name" placeholder="cth. Persiapan Kejurnas 2026"/></div>
     <div class="field">
       <label>Atlet</label>
@@ -6322,7 +6548,7 @@ function viewMasterplanDetail(){
       ${state.mpSection==='load' ? mpLoadSection(mp, wk) : ""}
       ${state.mpSection==='monitoring' ? mpMonitoringSection(mp, wk) : ""}
     </div>
-    <span class="delete-link" onclick="deleteMasterplan('${mp.id}')">🗑 Hapus Master Plan</span>
+    <span class="delete-link" onclick="deleteMasterplan('${mp.id}')">${icon('trash',14)} Hapus Master Plan</span>
   `;
 }
 
@@ -6390,12 +6616,12 @@ function mpMacrocycleSection(mp, wk){
             <span>Int: ${p.intensityTarget||p.intensity}</span>
             ${p.frequency ? `<span>Freq: ${p.frequency}</span>` : ''}
             ${p.recoveryTarget ? `<span>Recovery: ${p.recoveryTarget}</span>` : ''}
-            ${p.deloadWeek ? `<span class="deload">⚠ Deload Phase</span>` : ''}
+            ${p.deloadWeek ? `<span class="deload">${icon('warning',12)} Deload Phase</span>` : ''}
           </div>
           ${isStaff() ? `
           <div class="pactions">
             <a onclick="openEditPhaseModal('${mp.id}','${p.id}')">✎ Edit</a>
-            <a class="del" onclick="deletePhase('${mp.id}','${p.id}')">🗑 Hapus</a>
+            <a class="del" onclick="deletePhase('${mp.id}','${p.id}')">${icon('trash',13)} Hapus</a>
           </div>` : ''}
         </div>`;
       }).join("")}
@@ -6450,7 +6676,7 @@ function mpLoadSection(mp, wk){
 
     ${warnings.length ? `
       <div class="chart-card">
-        <h3>⚠️ Load Monitoring Warnings</h3>
+        <h3>${icon('warning',16)} Load Monitoring Warnings</h3>
         ${warnings.map(w=>`<div class="warn-box ${w.severity==='high'?'sev-high':'sev-med'}"><span class="wicon">${w.severity==='high'?'🔴':'🟠'}</span><span>${w.msg}</span></div>`).join("")}
         <p class="helper" style="margin-top:4px;font-style:italic;">${disclaimer}</p>
       </div>
@@ -6469,7 +6695,7 @@ function mpLoadSection(mp, wk){
         <div class="week-load-row ${isCurrent?'current':''}" onclick="openWeekLoadModal('${mp.id}', ${w})">
           <div class="wk-num">M${w}</div>
           <div class="wk-phase">${phase?phase.label:'-'}${load && load.isDeload ? ' · Deload':''}</div>
-          <div class="wk-cell" style="background:${cellColor};color:#fff;">${cellIcon}</div>
+          <div class="wk-cell" style="background:${cellColor};color:#06211D;">${cellIcon}</div>
           ${!load ? `<span class="wk-empty">Belum diisi</span>` : `<span class="helper" style="margin:0;">${volL}/${intL}</span>`}
         </div>
       `;
@@ -6510,7 +6736,7 @@ function mpMonitoringSection(mp, wk){
 
 function modalAddWeeklyLog(payload){
   return `
-    <div class="modal-head"><h3>Monitoring Minggu ${payload.week}</h3><button class="close-x" onclick="closeModal()">✕</button></div>
+    <div class="modal-head"><h3>Monitoring Minggu ${payload.week}</h3><button class="close-x" onclick="closeModal()">${icon('close',18)}</button></div>
     <div class="field-row">
       <div class="field"><label>Planned RPE</label><input id="wl-planned" type="number" min="1" max="10" placeholder="7"/></div>
       <div class="field"><label>Actual RPE</label><input id="wl-actual" type="number" min="1" max="10" placeholder="8"/></div>
@@ -6585,11 +6811,20 @@ function renderAuthScreen(){
   const configMissing = !sb;
   root.innerHTML = `
     <div id="auth-screen">
+      <svg class="auth-geo" viewBox="0 0 400 800" preserveAspectRatio="xMidYMid slice" xmlns="http://www.w3.org/2000/svg">
+        <circle cx="40" cy="90" r="120" fill="none" stroke="var(--turquoise)" stroke-width="1" opacity="0.14"/>
+        <circle cx="370" cy="700" r="160" fill="none" stroke="var(--turquoise)" stroke-width="1" opacity="0.12"/>
+        <line x1="-20" y1="230" x2="250" y2="30" stroke="var(--turquoise)" stroke-width="1" opacity="0.18"/>
+        <line x1="150" y1="800" x2="420" y2="560" stroke="var(--turquoise)" stroke-width="1" opacity="0.16"/>
+        <path d="M30 420 L90 460 L70 520 L120 560" fill="none" stroke="var(--turquoise)" stroke-width="1.5" opacity="0.16" stroke-linecap="round" stroke-linejoin="round"/>
+        <circle cx="330" cy="150" r="3" fill="var(--turquoise)" opacity="0.5"/>
+        <circle cx="60" cy="600" r="3" fill="var(--turquoise)" opacity="0.4"/>
+      </svg>
       <div class="auth-card">
         <div class="auth-logo">
           <img src="icon-192.png" alt="Fight With Jo"/>
-          <h1>FIGHT WITH JO</h1>
-          <p>Performance App</p>
+          <h1>FIGHTWITHJO PERFORMANCE</h1>
+          <p>Sport Science &bull; Athlete Monitoring</p>
         </div>
         ${configMissing ? `
           <div class="config-warning">
