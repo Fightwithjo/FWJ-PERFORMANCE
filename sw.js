@@ -13,7 +13,7 @@
  * tetap memegang app-shell versi lama karena strategi cache-first pada aset shell.
  * ========================================================================== */
 
-const SW_VERSION = "fwj-v2";
+const SW_VERSION = "fwj-v3";
 const CACHE_NAME = `fightwithjo-shell-${SW_VERSION}`;
 
 // Hanya app-shell statis milik origin sendiri yang di-cache.
