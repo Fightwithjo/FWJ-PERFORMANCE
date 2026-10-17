@@ -7639,7 +7639,33 @@ async function initApp(){
 initApp();
 
 if("serviceWorker" in navigator){
-  window.addEventListener("load", () => { navigator.serviceWorker.register("sw.js").catch(()=>{}); });
+  window.addEventListener("load", () => {
+    navigator.serviceWorker.register("sw.js").then((reg) => {
+      // Ada versi Service Worker baru ter-deteksi (habis deploy update) → begitu dia
+      // selesai install, langsung suruh aktif (skip waiting) alih-alih nunggu semua
+      // tab lama ditutup dulu, supaya update tidak nyangkut butuh clear cache manual.
+      reg.addEventListener("updatefound", () => {
+        const newWorker = reg.installing;
+        if(!newWorker) return;
+        newWorker.addEventListener("statechange", () => {
+          if(newWorker.state === "installed" && navigator.serviceWorker.controller){
+            newWorker.postMessage("SKIP_WAITING");
+          }
+        });
+      });
+      // Cek ada update setiap kali app dibuka/reload (berguna untuk PWA yang jarang ditutup).
+      reg.update().catch(()=>{});
+    }).catch(()=>{});
+
+    // Begitu Service Worker baru resmi ambil alih, reload sekali supaya app-shell &
+    // konten yang ditampilkan pasti versi terbaru (bukan dari cache lama).
+    let swRefreshed = false;
+    navigator.serviceWorker.addEventListener("controllerchange", () => {
+      if(swRefreshed) return;
+      swRefreshed = true;
+      window.location.reload();
+    });
+  });
 }
 </script>
 </body>
