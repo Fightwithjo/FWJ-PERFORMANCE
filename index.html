@@ -284,6 +284,14 @@
   .meso-card .mtitle b{font-size:13.5px;}
   .meso-card .mtitle span{font-size:11px;color:var(--muted);}
   .meso-tags{display:flex;flex-wrap:wrap;gap:5px;margin-top:8px;}
+  /* ---- Loading Structure chart (3:1 / 3:2 / 4:1 / 4:2) ---- */
+  .ls-chart-wrap{margin:10px 0 2px;}
+  .ls-chart{display:flex;align-items:flex-end;gap:4px;height:48px;border-bottom:1.5px solid var(--text);}
+  .ls-bar{flex:1;max-width:24px;background:transparent;border:1.5px solid var(--text);border-bottom:none;border-radius:2px 2px 0 0;}
+  .ls-bar.unload{background:var(--turquoise-tint);border-color:var(--turquoise-dark);}
+  .ls-chart-axis{display:flex;gap:4px;margin-top:3px;}
+  .ls-chart-axis span{flex:1;max-width:24px;text-align:center;font-size:9px;color:var(--muted);}
+  .ls-chart-label{font-size:10.5px;color:var(--muted);margin-top:4px;font-weight:600;}
   .meso-tags span{font-size:10.5px;background:var(--turquoise-tint);color:var(--turquoise-dark);border-radius:6px;padding:3px 7px;font-weight:600;}
   .log-item{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:12px 13px;margin-bottom:10px;}
   .log-item .lhead{display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;}
@@ -314,9 +322,9 @@
   .phase-card .ptags{display:flex;flex-wrap:wrap;gap:5px;margin-top:8px;}
   .phase-card .ptags span{font-size:10.5px;background:var(--turquoise-tint);color:var(--turquoise-dark);border-radius:6px;padding:3px 7px;font-weight:600;}
   .phase-card .ptags span.deload{background:var(--warn-med-bg);color:var(--warn-med-text);}
-  .phase-card .pactions{display:flex;gap:14px;margin-top:8px;}
-  .phase-card .pactions a{font-size:11.5px;font-weight:700;color:var(--turquoise-dark);cursor:pointer;}
-  .phase-card .pactions a.del{color:var(--poor);}
+  .phase-card .pactions,.meso-card .pactions{display:flex;gap:14px;margin-top:8px;}
+  .phase-card .pactions a,.meso-card .pactions a{font-size:11.5px;font-weight:700;color:var(--turquoise-dark);cursor:pointer;}
+  .phase-card .pactions a.del,.meso-card .pactions a.del{color:var(--poor);}
 
   /* ---- Master Plan: Weekly Load list ---- */
   .week-load-row{display:flex;align-items:center;gap:10px;background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:10px 12px;margin-bottom:8px;cursor:pointer;}
@@ -5687,6 +5695,16 @@ const PHASE_TYPE_OPTIONS = [
   "Competition Preparation","Pre-Competition","Competition","Transition / Recovery"
 ];
 const LEVEL3_OPTIONS = ["Low","Moderate","High"];
+// ---- Microcycle Loading Structure (Haff & Triplett — Periodization Strategies for Youth
+// Development): rasio minggu loading vs unloading di dalam satu mesocycle. `pattern` = beban
+// relatif per minggu (1=Low,2=Moderate,3=High); minggu setelah `loadWeeks` = minggu unloading/deload.
+const LOADING_STRUCTURES = {
+  "3:1": { label:"3:1 — 3 minggu loading + 1 minggu unloading", loadWeeks:3, unloadWeeks:1, pattern:[2,3,2,1] },
+  "3:2": { label:"3:2 — 3 minggu loading + 2 minggu unloading", loadWeeks:3, unloadWeeks:2, pattern:[2,3,2,1,1] },
+  "4:1": { label:"4:1 — 4 minggu loading + 1 minggu unloading", loadWeeks:4, unloadWeeks:1, pattern:[2,3,2,3,1] },
+  "4:2": { label:"4:2 — 4 minggu loading + 2 minggu unloading", loadWeeks:4, unloadWeeks:2, pattern:[2,3,2,3,1,1] }
+};
+const LOAD_LEVEL_MAP = {1:"Low",2:"Moderate",3:"High"};
 // Metric intensity yang tersedia per tipe training — tidak dipaksakan satu metode untuk semua.
 const INTENSITY_METRICS = {
   strength:  { label:"Strength",   options:[["pct1rm","% 1RM"],["rpe","RPE"],["rir","RIR"]], hint:"Contoh: 80–85% 1RM" },
@@ -5723,6 +5741,27 @@ function emptyWeekLoad(week){
 function getWeekLoad(mp, week){
   mp.weeklyLoads = mp.weeklyLoads || {};
   return mp.weeklyLoads[week] || null;
+}
+// Terapkan pola Loading Structure (3:1/3:2/4:1/4:2) ke weeklyLoads minggu-minggu mesocycle
+// ini: isi Volume/Intensity Level per minggu mengikuti pattern, lalu tandai minggu unloading
+// (tail) sebagai isDeload=true. Field detail lain (sessions, sets, dst) milik minggu yang
+// sudah pernah diisi coach tetap dipertahankan — hanya level & flag deload yang di-overwrite.
+function applyLoadingStructure(mp, meso){
+  const s = LOADING_STRUCTURES[meso.loadingStructure]; if(!s) return;
+  mp.weeklyLoads = mp.weeklyLoads || {};
+  s.pattern.forEach((v, i) => {
+    const week = meso.weekStart + i;
+    const level = LOAD_LEVEL_MAP[v];
+    const isUnload = i >= s.loadWeeks;
+    const existing = mp.weeklyLoads[week] || emptyWeekLoad(week);
+    existing.volume = existing.volume || emptyWeekLoad(week).volume;
+    existing.intensity = existing.intensity || emptyWeekLoad(week).intensity;
+    existing.volume.level = level;
+    existing.intensity.level = level;
+    existing.isDeload = isUnload;
+    existing.updatedAt = Date.now();
+    mp.weeklyLoads[week] = existing;
+  });
 }
 
 const MODEL_LABEL = { traditional:"Traditional / American", block:"Block Periodization", nonlinear:"Non-linear / Undulating" };
@@ -5964,6 +6003,124 @@ function modalEditPhase(payload){
     </div>
     <div id="ph-err" class="err" style="display:none;"></div>
     <button class="btn" onclick="submitPhase('${payload.mpId}', ${payload.phaseId?`'${payload.phaseId}'`:null})">Simpan Phase</button>
+  `;
+}
+
+/* ---- Mesocycle management (manual CRUD, melengkapi auto-generate dari Phase) ---- */
+function openAddMesoModal(mpId){ openModal("editMeso", {mpId, mesoId:null}); }
+function openEditMesoModal(mpId, mesoId){ openModal("editMeso", {mpId, mesoId}); }
+// Dipanggil dari <select id="meso-loadstruct"> saat coach memilih rasio Loading Structure:
+// auto-isi Jumlah Minggu (terkunci, karena jumlahnya ditentukan rasio loading:unloading) dan
+// auto-centang Deload kalau ada minggu unloading. Pilih "Custom (manual)" untuk balik ke input bebas.
+function onLoadStructureChange(sel){
+  const key = sel.value;
+  const wEl = document.getElementById("meso-weeks");
+  const dEl = document.getElementById("meso-deload");
+  const prevEl = document.getElementById("meso-ls-preview");
+  const s = LOADING_STRUCTURES[key];
+  if(s){
+    wEl.value = s.loadWeeks + s.unloadWeeks;
+    wEl.readOnly = true;
+    if(dEl) dEl.checked = s.unloadWeeks > 0;
+  } else {
+    wEl.readOnly = false;
+  }
+  if(prevEl) prevEl.innerHTML = loadingStructureChart(key);
+}
+function submitMesocycle(mpId, mesoId){
+  const errBox = document.getElementById("meso-err");
+  const blockLabel = document.getElementById("meso-label").value.trim();
+  const phaseLabel = document.getElementById("meso-phase").value;
+  const weekStart = Number(document.getElementById("meso-weekstart").value);
+  const loadingStructure = document.getElementById("meso-loadstruct").value;
+  const ls = LOADING_STRUCTURES[loadingStructure];
+  const weeks = ls ? (ls.loadWeeks + ls.unloadWeeks) : Number(document.getElementById("meso-weeks").value);
+  const focus = document.getElementById("meso-focus").value.trim();
+  const volume = document.getElementById("meso-volume").value;
+  const intensity = document.getElementById("meso-intensity").value;
+  const specificity = document.getElementById("meso-specificity").value;
+  const deload = document.getElementById("meso-deload").checked;
+  if(!blockLabel || !weekStart || !weeks || weeks<1){
+    errBox.style.display="block"; errBox.textContent="Isi nama mesocycle, minggu mulai, dan jumlah minggu."; return;
+  }
+  const weekEnd = weekStart + weeks - 1;
+  const list = loadMasterplans();
+  const mp = list.find(m=>m.id===mpId); if(!mp) return;
+  if(mp.durationWeeks && weekEnd > mp.durationWeeks){
+    errBox.style.display="block"; errBox.textContent=`Minggu akhir (${weekEnd}) melebihi durasi Master Plan (${mp.durationWeeks} minggu).`; return;
+  }
+  const patch = { blockLabel, phaseLabel, weekStart, weekEnd, focus, volume, intensity, specificity, deload,
+    loadingStructure: loadingStructure || null };
+  let mesoObj;
+  if(mesoId){
+    const idx = mp.mesocycles.findIndex(m=>m.id===mesoId);
+    if(idx>-1){ mp.mesocycles[idx] = { ...mp.mesocycles[idx], ...patch }; mesoObj = mp.mesocycles[idx]; }
+  } else {
+    mesoObj = { id: genId("meso"), model: mp.resolvedModel, ...patch };
+    mp.mesocycles.push(mesoObj);
+  }
+  mp.mesocycles.sort((a,b)=>a.weekStart-b.weekStart);
+  // Kalau pakai Loading Structure (bukan Custom), auto-generate Volume/Intensity per minggu
+  // mengikuti pola 3:1/3:2/4:1/4:2 ke tab Volume/Intensity (bisa diedit manual lagi sesudahnya).
+  if(ls && mesoObj) applyLoadingStructure(mp, mesoObj);
+  saveMasterplans(list);
+  closeModal(); render();
+  showToast(ls ? `Mesocycle tersimpan dengan Loading Structure ${loadingStructure}` : "Mesocycle tersimpan");
+}
+function deleteMesocycle(mpId, mesoId){
+  if(!confirm("Hapus mesocycle ini dari Master Plan? Daily Plan yang sudah diisi tidak akan terhapus.")) return;
+  const list = loadMasterplans();
+  const mp = list.find(m=>m.id===mpId); if(!mp) return;
+  mp.mesocycles = mp.mesocycles.filter(m=>m.id!==mesoId);
+  saveMasterplans(list);
+  render();
+  showToast("Mesocycle dihapus");
+}
+function modalEditMesocycle(payload){
+  const list = loadMasterplans();
+  const mp = list.find(m=>m.id===payload.mpId);
+  const meso = payload.mesoId ? mp.mesocycles.find(m=>m.id===payload.mesoId) : null;
+  const lastEnd = mp.mesocycles.length ? Math.max(...mp.mesocycles.map(m=>m.weekEnd)) : 0;
+  const d = meso || { blockLabel:"", phaseLabel: mp.phases[0]?.label || "", weekStart: lastEnd+1, weekEnd:null,
+    focus:"", volume:"Moderate", intensity:"Moderate", specificity:"Moderate", deload:false, loadingStructure:null };
+  const weeksVal = meso ? (meso.weekEnd-meso.weekStart+1) : "";
+  const lsKey = d.loadingStructure || "";
+  return `
+    <div class="modal-head"><h3>${meso?"Edit":"Tambah"} Mesocycle</h3><button class="close-x" onclick="closeModal()">${icon('close',18)}</button></div>
+    <div class="field"><label>Nama Mesocycle / Block Label</label><input id="meso-label" value="${d.blockLabel}" placeholder="cth. Accumulation Block 1"/></div>
+    <div class="field"><label>Termasuk Phase</label>
+      <select id="meso-phase">${(mp.phases||[]).map(p=>`<option value="${p.label}" ${d.phaseLabel===p.label?'selected':''}>${p.label}</option>`).join("") || `<option value="${d.phaseLabel}">${d.phaseLabel||'-'}</option>`}</select>
+    </div>
+    <div class="field"><label>Loading Structure (Microcycle)</label>
+      <select id="meso-loadstruct" onchange="onLoadStructureChange(this)">
+        <option value="">Custom (atur manual)</option>
+        ${Object.entries(LOADING_STRUCTURES).map(([k,s])=>`<option value="${k}" ${lsKey===k?'selected':''}>${s.label}</option>`).join("")}
+      </select>
+      <p class="helper" style="margin:4px 0 0;">Pilih rasio loading:unloading → Jumlah Minggu & pola Volume/Intensity mingguan otomatis mengikuti rasio ini (bisa diedit lagi lewat tab Volume/Intensity).</p>
+    </div>
+    <div id="meso-ls-preview">${loadingStructureChart(lsKey)}</div>
+    <div class="field-row">
+      <div class="field"><label>Mulai di Minggu ke-</label><input id="meso-weekstart" type="number" min="1" max="${mp.durationWeeks}" value="${d.weekStart}"/></div>
+      <div class="field"><label>Jumlah Minggu</label><input id="meso-weeks" type="number" min="1" value="${weeksVal}" ${lsKey?'readonly':''}/></div>
+    </div>
+    <div class="field"><label>Focus</label><input id="meso-focus" value="${d.focus||''}" placeholder="cth. Hypertrophy & kapasitas kerja dasar"/></div>
+    <div class="field-row">
+      <div class="field"><label>Volume</label>
+        <select id="meso-volume">${LEVEL3_OPTIONS.map(l=>`<option ${normLevel3(d.volume)===l?'selected':''}>${l}</option>`).join("")}</select>
+      </div>
+      <div class="field"><label>Intensity</label>
+        <select id="meso-intensity">${LEVEL3_OPTIONS.map(l=>`<option ${normLevel3(d.intensity)===l?'selected':''}>${l}</option>`).join("")}</select>
+      </div>
+    </div>
+    <div class="field"><label>Specificity</label>
+      <select id="meso-specificity">${LEVEL3_OPTIONS.map(l=>`<option ${normLevel3(d.specificity)===l?'selected':''}>${l}</option>`).join("")}</select>
+    </div>
+    <div class="field" style="display:flex;align-items:center;gap:8px;">
+      <input type="checkbox" id="meso-deload" ${d.deload?'checked':''}/>
+      <label style="margin:0;" for="meso-deload">Tandai sebagai Deload Block</label>
+    </div>
+    <div id="meso-err" class="err" style="display:none;"></div>
+    <button class="btn" onclick="submitMesocycle('${payload.mpId}', ${payload.mesoId?`'${payload.mesoId}'`:null})">Simpan Mesocycle</button>
   `;
 }
 
@@ -7152,6 +7309,26 @@ function trendBars(level3){
   return `<div class="bar-track">${segs}</div>`;
 }
 
+// Grafik batang "Loading structure" (gaya outline seperti pada textbook periodization):
+// tiap batang = 1 minggu, tinggi = beban relatif (Low/Moderate/High), batang warna beda
+// untuk minggu unloading/deload di ekor pola.
+function loadingStructureChart(key){
+  const s = LOADING_STRUCTURES[key]; if(!s) return "";
+  const maxV = Math.max(...s.pattern);
+  const bars = s.pattern.map((v,i)=>{
+    const h = 10 + Math.round((v/maxV)*34);
+    const isUnload = i >= s.loadWeeks;
+    return `<div class="ls-bar ${isUnload?'unload':''}" style="height:${h}px;" title="Minggu ${i+1}: ${LOAD_LEVEL_MAP[v]}${isUnload?' (Unloading)':''}"></div>`;
+  }).join("");
+  return `
+    <div class="ls-chart-wrap">
+      <div class="ls-chart">${bars}</div>
+      <div class="ls-chart-axis">${s.pattern.map((_,i)=>`<span>M${i+1}</span>`).join("")}</div>
+      <div class="ls-chart-label">Loading Structure ${key} · ${s.loadWeeks} minggu loading + ${s.unloadWeeks} minggu unloading</div>
+    </div>
+  `;
+}
+
 function mpMacrocycleSection(mp, wk){
   return `
     ${phaseTimeline(mp, wk)}
@@ -7201,20 +7378,28 @@ function mpMacrocycleSection(mp, wk){
 
 function mpMesocycleSection(mp, wk){
   return `
+    ${isStaff() ? `<button class="btn ghost" style="margin-bottom:12px;" onclick="openAddMesoModal('${mp.id}')">+ Tambah Mesocycle</button>` : ""}
     <div class="card-list">
       ${mp.mesocycles.map((m,i) => `
-        <div class="meso-card ${m.deload ? '' : ''}" style="${wk>=m.weekStart && wk<=m.weekEnd ? 'box-shadow:0 0 0 2px var(--turquoise) inset;' : ''}">
+        <div class="meso-card ${m.deload ? 'deload' : ''}" style="${wk>=m.weekStart && wk<=m.weekEnd ? 'box-shadow:0 0 0 2px var(--turquoise) inset;' : ''}">
           <div class="mtitle"><b>Mesocycle ${i+1} — ${m.blockLabel}</b><span>Minggu ${m.weekStart}–${m.weekEnd}</span></div>
           <p style="margin:0;font-size:12.5px;color:var(--muted);">${m.focus}</p>
           <div class="meso-tags">
             <span>Volume: ${m.volume}</span>
             <span>Intensity: ${m.intensity}</span>
             <span>Specificity: ${m.specificity}</span>
-            ${m.weekEnd - m.weekStart + 1 >= 4 ? `<span>Deload: Minggu ${m.weekEnd}</span>` : ""}
+            ${m.deload || (m.weekEnd - m.weekStart + 1 >= 4) ? `<span>Deload: Minggu ${m.weekEnd}</span>` : ""}
           </div>
-          ${isStaff() ? `<span style="display:inline-block;margin-top:8px;font-size:11.5px;font-weight:700;color:var(--turquoise-dark);cursor:pointer;" onclick="duplicateMesocycle('${mp.id}',${i})">📋 Duplicate Mesocycle</span>` : ""}
+          ${m.loadingStructure && LOADING_STRUCTURES[m.loadingStructure] ? loadingStructureChart(m.loadingStructure) : ""}
+          ${isStaff() ? `
+          <div class="pactions" style="margin-top:8px;">
+            <a onclick="openEditMesoModal('${mp.id}','${m.id}')">✎ Edit</a>
+            <a onclick="duplicateMesocycle('${mp.id}',${i})">📋 Duplicate</a>
+            <a class="del" onclick="deleteMesocycle('${mp.id}','${m.id}')">${icon('trash',13)} Hapus</a>
+          </div>` : ""}
         </div>
       `).join("")}
+      ${!mp.mesocycles.length ? `<p class="helper">Belum ada mesocycle. ${isStaff() ? 'Klik "+ Tambah Mesocycle" untuk membuat blok latihan pertama.' : ''}</p>` : ""}
     </div>
   `;
 }
@@ -7355,6 +7540,7 @@ function renderModal(){
   if(state.modal.name==="addMasterplan") modal.innerHTML = modalAddMasterplan();
   if(state.modal.name==="addWeeklyLog") modal.innerHTML = modalAddWeeklyLog(state.modal.payload);
   if(state.modal.name==="editPhase") modal.innerHTML = modalEditPhase(state.modal.payload);
+  if(state.modal.name==="editMeso") modal.innerHTML = modalEditMesocycle(state.modal.payload);
   if(state.modal.name==="weekLoad") modal.innerHTML = modalWeekLoad(state.modal.payload);
   if(state.modal.name==="exercisePicker") modal.innerHTML = modalExercisePicker(state.modal.payload);
   if(state.modal.name==="addCustomExercise") modal.innerHTML = modalAddCustomExercise(state.modal.payload);
