@@ -7,9 +7,13 @@
  *   - request non-GET (POST/PUT/PATCH/DELETE) apa pun
  * Supaya data atlet, autentikasi, dan penyimpanan TIDAK PERNAH basi/ter-cache
  * secara tidak sengaja.
+ *
+ * CATATAN UPDATE: setiap kali deploy fitur/perubahan baru ke index.html, NAIKKAN
+ * SW_VERSION di bawah ini (misal fwj-v2 -> fwj-v3). Tanpa ini, browser lama bisa
+ * tetap memegang app-shell versi lama karena strategi cache-first pada aset shell.
  * ========================================================================== */
 
-const SW_VERSION = "fwj-v1";
+const SW_VERSION = "fwj-v2";
 const CACHE_NAME = `fightwithjo-shell-${SW_VERSION}`;
 
 // Hanya app-shell statis milik origin sendiri yang di-cache.
@@ -35,7 +39,9 @@ self.addEventListener("install", (event) => {
           })
         )
       );
-      self.skipWaiting();
+      // Tidak skipWaiting() otomatis di sini — biarkan index.html yang memutuskan
+      // kapan versi baru diaktifkan (lewat pesan SKIP_WAITING), supaya reload
+      // terkoordinasi dan tidak mengganggu user di tengah sesi input data.
     })()
   );
 });
@@ -80,7 +86,7 @@ self.addEventListener("fetch", (event) => {
     event.respondWith(
       (async () => {
         try {
-          const fresh = await fetch(req);
+          const fresh = await fetch(req, { cache: "no-store" });
           const cache = await caches.open(CACHE_NAME);
           cache.put("./index.html", fresh.clone()).catch(() => {});
           return fresh;
