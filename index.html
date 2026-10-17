@@ -5696,15 +5696,19 @@ const PHASE_TYPE_OPTIONS = [
 ];
 const LEVEL3_OPTIONS = ["Low","Moderate","High"];
 // ---- Microcycle Loading Structure (Haff & Triplett — Periodization Strategies for Youth
-// Development): rasio minggu loading vs unloading di dalam satu mesocycle. `pattern` = beban
-// relatif per minggu (1=Low,2=Moderate,3=High); minggu setelah `loadWeeks` = minggu unloading/deload.
-const LOADING_STRUCTURES = {
-  "3:1": { label:"3:1 — 3 minggu loading + 1 minggu unloading", loadWeeks:3, unloadWeeks:1, pattern:[2,3,2,1] },
-  "3:2": { label:"3:2 — 3 minggu loading + 2 minggu unloading", loadWeeks:3, unloadWeeks:2, pattern:[2,3,2,1,1] },
-  "4:1": { label:"4:1 — 4 minggu loading + 1 minggu unloading", loadWeeks:4, unloadWeeks:1, pattern:[2,3,2,3,1] },
-  "4:2": { label:"4:2 — 4 minggu loading + 2 minggu unloading", loadWeeks:4, unloadWeeks:2, pattern:[2,3,2,3,1,1] }
-};
+// Development): rasio minggu loading vs unloading di dalam satu mesocycle, BEBAS ditentukan
+// coach sendiri (bukan daftar preset) — misal 3:1, 5:2, 6:1, dst. `buildLoadingPattern`
+// menghasilkan pola beban relatif per minggu (1=Low,2=Moderate,3=High) secara dinamis:
+// minggu loading berombak naik-turun Moderate/High, minggu unloading (ekor) selalu Low.
 const LOAD_LEVEL_MAP = {1:"Low",2:"Moderate",3:"High"};
+function buildLoadingPattern(loadWeeks, unloadWeeks){
+  loadWeeks = Math.max(0, Number(loadWeeks)||0);
+  unloadWeeks = Math.max(0, Number(unloadWeeks)||0);
+  const pattern = [];
+  for(let i=0;i<loadWeeks;i++) pattern.push(i%2===0 ? 2 : 3); // undulasi Moderate/High
+  for(let i=0;i<unloadWeeks;i++) pattern.push(1); // minggu unloading selalu Low
+  return pattern;
+}
 // Metric intensity yang tersedia per tipe training — tidak dipaksakan satu metode untuk semua.
 const INTENSITY_METRICS = {
   strength:  { label:"Strength",   options:[["pct1rm","% 1RM"],["rpe","RPE"],["rir","RIR"]], hint:"Contoh: 80–85% 1RM" },
@@ -5742,17 +5746,20 @@ function getWeekLoad(mp, week){
   mp.weeklyLoads = mp.weeklyLoads || {};
   return mp.weeklyLoads[week] || null;
 }
-// Terapkan pola Loading Structure (3:1/3:2/4:1/4:2) ke weeklyLoads minggu-minggu mesocycle
-// ini: isi Volume/Intensity Level per minggu mengikuti pattern, lalu tandai minggu unloading
-// (tail) sebagai isDeload=true. Field detail lain (sessions, sets, dst) milik minggu yang
-// sudah pernah diisi coach tetap dipertahankan — hanya level & flag deload yang di-overwrite.
+// Terapkan pola Loading Structure (rasio custom loadWeeks:unloadWeeks milik coach) ke
+// weeklyLoads minggu-minggu mesocycle ini: isi Volume/Intensity Level per minggu mengikuti
+// pattern, lalu tandai minggu unloading (tail) sebagai isDeload=true. Field detail lain
+// (sessions, sets, dst) milik minggu yang sudah pernah diisi coach tetap dipertahankan —
+// hanya level & flag deload yang di-overwrite.
 function applyLoadingStructure(mp, meso){
-  const s = LOADING_STRUCTURES[meso.loadingStructure]; if(!s) return;
+  const loadWeeks = Number(meso.loadWeeks)||0, unloadWeeks = Number(meso.unloadWeeks)||0;
+  if(loadWeeks<=0 && unloadWeeks<=0) return;
+  const pattern = buildLoadingPattern(loadWeeks, unloadWeeks);
   mp.weeklyLoads = mp.weeklyLoads || {};
-  s.pattern.forEach((v, i) => {
+  pattern.forEach((v, i) => {
     const week = meso.weekStart + i;
     const level = LOAD_LEVEL_MAP[v];
-    const isUnload = i >= s.loadWeeks;
+    const isUnload = i >= loadWeeks;
     const existing = mp.weeklyLoads[week] || emptyWeekLoad(week);
     existing.volume = existing.volume || emptyWeekLoad(week).volume;
     existing.intensity = existing.intensity || emptyWeekLoad(week).intensity;
@@ -6009,32 +6016,33 @@ function modalEditPhase(payload){
 /* ---- Mesocycle management (manual CRUD, melengkapi auto-generate dari Phase) ---- */
 function openAddMesoModal(mpId){ openModal("editMeso", {mpId, mesoId:null}); }
 function openEditMesoModal(mpId, mesoId){ openModal("editMeso", {mpId, mesoId}); }
-// Dipanggil dari <select id="meso-loadstruct"> saat coach memilih rasio Loading Structure:
-// auto-isi Jumlah Minggu (terkunci, karena jumlahnya ditentukan rasio loading:unloading) dan
-// auto-centang Deload kalau ada minggu unloading. Pilih "Custom (manual)" untuk balik ke input bebas.
-function onLoadStructureChange(sel){
-  const key = sel.value;
+// Dipanggil dari input #meso-ls-load / #meso-ls-unload saat coach mengetik rasio loading:unloading
+// sendiri (custom, bebas angka berapa pun): auto-hitung & kunci Jumlah Minggu total, auto-centang
+// Deload kalau ada minggu unloading, dan refresh preview grafik batangnya secara live.
+function onLoadingRatioChange(){
+  const loadWeeks = Number(document.getElementById("meso-ls-load").value)||0;
+  const unloadWeeks = Number(document.getElementById("meso-ls-unload").value)||0;
   const wEl = document.getElementById("meso-weeks");
   const dEl = document.getElementById("meso-deload");
   const prevEl = document.getElementById("meso-ls-preview");
-  const s = LOADING_STRUCTURES[key];
-  if(s){
-    wEl.value = s.loadWeeks + s.unloadWeeks;
+  if(loadWeeks>0 || unloadWeeks>0){
+    wEl.value = loadWeeks + unloadWeeks;
     wEl.readOnly = true;
-    if(dEl) dEl.checked = s.unloadWeeks > 0;
+    if(dEl) dEl.checked = unloadWeeks > 0;
   } else {
     wEl.readOnly = false;
   }
-  if(prevEl) prevEl.innerHTML = loadingStructureChart(key);
+  if(prevEl) prevEl.innerHTML = loadingStructureChart(loadWeeks, unloadWeeks);
 }
 function submitMesocycle(mpId, mesoId){
   const errBox = document.getElementById("meso-err");
   const blockLabel = document.getElementById("meso-label").value.trim();
   const phaseLabel = document.getElementById("meso-phase").value;
   const weekStart = Number(document.getElementById("meso-weekstart").value);
-  const loadingStructure = document.getElementById("meso-loadstruct").value;
-  const ls = LOADING_STRUCTURES[loadingStructure];
-  const weeks = ls ? (ls.loadWeeks + ls.unloadWeeks) : Number(document.getElementById("meso-weeks").value);
+  const loadWeeks = Number(document.getElementById("meso-ls-load").value)||0;
+  const unloadWeeks = Number(document.getElementById("meso-ls-unload").value)||0;
+  const hasRatio = loadWeeks>0 || unloadWeeks>0;
+  const weeks = hasRatio ? (loadWeeks + unloadWeeks) : Number(document.getElementById("meso-weeks").value);
   const focus = document.getElementById("meso-focus").value.trim();
   const volume = document.getElementById("meso-volume").value;
   const intensity = document.getElementById("meso-intensity").value;
@@ -6050,7 +6058,7 @@ function submitMesocycle(mpId, mesoId){
     errBox.style.display="block"; errBox.textContent=`Minggu akhir (${weekEnd}) melebihi durasi Master Plan (${mp.durationWeeks} minggu).`; return;
   }
   const patch = { blockLabel, phaseLabel, weekStart, weekEnd, focus, volume, intensity, specificity, deload,
-    loadingStructure: loadingStructure || null };
+    loadWeeks: hasRatio ? loadWeeks : 0, unloadWeeks: hasRatio ? unloadWeeks : 0 };
   let mesoObj;
   if(mesoId){
     const idx = mp.mesocycles.findIndex(m=>m.id===mesoId);
@@ -6060,12 +6068,12 @@ function submitMesocycle(mpId, mesoId){
     mp.mesocycles.push(mesoObj);
   }
   mp.mesocycles.sort((a,b)=>a.weekStart-b.weekStart);
-  // Kalau pakai Loading Structure (bukan Custom), auto-generate Volume/Intensity per minggu
-  // mengikuti pola 3:1/3:2/4:1/4:2 ke tab Volume/Intensity (bisa diedit manual lagi sesudahnya).
-  if(ls && mesoObj) applyLoadingStructure(mp, mesoObj);
+  // Kalau coach isi rasio loading:unloading custom, auto-generate Volume/Intensity per minggu
+  // mengikuti pola itu ke tab Volume/Intensity (bisa diedit manual lagi sesudahnya).
+  if(hasRatio && mesoObj) applyLoadingStructure(mp, mesoObj);
   saveMasterplans(list);
   closeModal(); render();
-  showToast(ls ? `Mesocycle tersimpan dengan Loading Structure ${loadingStructure}` : "Mesocycle tersimpan");
+  showToast(hasRatio ? `Mesocycle tersimpan dengan Loading Structure ${loadWeeks}:${unloadWeeks}` : "Mesocycle tersimpan");
 }
 function deleteMesocycle(mpId, mesoId){
   if(!confirm("Hapus mesocycle ini dari Master Plan? Daily Plan yang sudah diisi tidak akan terhapus.")) return;
@@ -6082,26 +6090,27 @@ function modalEditMesocycle(payload){
   const meso = payload.mesoId ? mp.mesocycles.find(m=>m.id===payload.mesoId) : null;
   const lastEnd = mp.mesocycles.length ? Math.max(...mp.mesocycles.map(m=>m.weekEnd)) : 0;
   const d = meso || { blockLabel:"", phaseLabel: mp.phases[0]?.label || "", weekStart: lastEnd+1, weekEnd:null,
-    focus:"", volume:"Moderate", intensity:"Moderate", specificity:"Moderate", deload:false, loadingStructure:null };
+    focus:"", volume:"Moderate", intensity:"Moderate", specificity:"Moderate", deload:false, loadWeeks:0, unloadWeeks:0 };
   const weeksVal = meso ? (meso.weekEnd-meso.weekStart+1) : "";
-  const lsKey = d.loadingStructure || "";
+  const loadWeeksVal = d.loadWeeks || "";
+  const unloadWeeksVal = d.unloadWeeks || "";
   return `
     <div class="modal-head"><h3>${meso?"Edit":"Tambah"} Mesocycle</h3><button class="close-x" onclick="closeModal()">${icon('close',18)}</button></div>
     <div class="field"><label>Nama Mesocycle / Block Label</label><input id="meso-label" value="${d.blockLabel}" placeholder="cth. Accumulation Block 1"/></div>
     <div class="field"><label>Termasuk Phase</label>
       <select id="meso-phase">${(mp.phases||[]).map(p=>`<option value="${p.label}" ${d.phaseLabel===p.label?'selected':''}>${p.label}</option>`).join("") || `<option value="${d.phaseLabel}">${d.phaseLabel||'-'}</option>`}</select>
     </div>
-    <div class="field"><label>Loading Structure (Microcycle)</label>
-      <select id="meso-loadstruct" onchange="onLoadStructureChange(this)">
-        <option value="">Custom (atur manual)</option>
-        ${Object.entries(LOADING_STRUCTURES).map(([k,s])=>`<option value="${k}" ${lsKey===k?'selected':''}>${s.label}</option>`).join("")}
-      </select>
-      <p class="helper" style="margin:4px 0 0;">Pilih rasio loading:unloading → Jumlah Minggu & pola Volume/Intensity mingguan otomatis mengikuti rasio ini (bisa diedit lagi lewat tab Volume/Intensity).</p>
+    <div class="field"><label>Loading Structure (Microcycle) — rasio custom</label>
+      <div class="field-row">
+        <div class="field"><label style="font-weight:400;font-size:11px;">Minggu Loading</label><input id="meso-ls-load" type="number" min="0" value="${loadWeeksVal}" placeholder="cth. 3" oninput="onLoadingRatioChange()"/></div>
+        <div class="field"><label style="font-weight:400;font-size:11px;">Minggu Unloading</label><input id="meso-ls-unload" type="number" min="0" value="${unloadWeeksVal}" placeholder="cth. 1" oninput="onLoadingRatioChange()"/></div>
+      </div>
+      <p class="helper" style="margin:4px 0 0;">Isi angka berapa pun sesuai rasio yang kamu mau (cth. 3:1, 5:2, 6:1). Kosongkan keduanya (0) kalau mau atur Jumlah Minggu & Volume/Intensity manual tanpa pola otomatis.</p>
     </div>
-    <div id="meso-ls-preview">${loadingStructureChart(lsKey)}</div>
+    <div id="meso-ls-preview">${loadingStructureChart(loadWeeksVal, unloadWeeksVal)}</div>
     <div class="field-row">
       <div class="field"><label>Mulai di Minggu ke-</label><input id="meso-weekstart" type="number" min="1" max="${mp.durationWeeks}" value="${d.weekStart}"/></div>
-      <div class="field"><label>Jumlah Minggu</label><input id="meso-weeks" type="number" min="1" value="${weeksVal}" ${lsKey?'readonly':''}/></div>
+      <div class="field"><label>Jumlah Minggu</label><input id="meso-weeks" type="number" min="1" value="${weeksVal}" ${(loadWeeksVal||unloadWeeksVal)?'readonly':''}/></div>
     </div>
     <div class="field"><label>Focus</label><input id="meso-focus" value="${d.focus||''}" placeholder="cth. Hypertrophy & kapasitas kerja dasar"/></div>
     <div class="field-row">
@@ -7311,20 +7320,24 @@ function trendBars(level3){
 
 // Grafik batang "Loading structure" (gaya outline seperti pada textbook periodization):
 // tiap batang = 1 minggu, tinggi = beban relatif (Low/Moderate/High), batang warna beda
-// untuk minggu unloading/deload di ekor pola.
-function loadingStructureChart(key){
-  const s = LOADING_STRUCTURES[key]; if(!s) return "";
-  const maxV = Math.max(...s.pattern);
-  const bars = s.pattern.map((v,i)=>{
+// untuk minggu unloading/deload di ekor pola. loadWeeks/unloadWeeks = rasio custom bebas
+// yang diketik coach sendiri (bukan dari daftar preset).
+function loadingStructureChart(loadWeeks, unloadWeeks){
+  loadWeeks = Number(loadWeeks)||0; unloadWeeks = Number(unloadWeeks)||0;
+  if(loadWeeks<=0 && unloadWeeks<=0) return "";
+  const pattern = buildLoadingPattern(loadWeeks, unloadWeeks);
+  if(!pattern.length) return "";
+  const maxV = Math.max(...pattern);
+  const bars = pattern.map((v,i)=>{
     const h = 10 + Math.round((v/maxV)*34);
-    const isUnload = i >= s.loadWeeks;
+    const isUnload = i >= loadWeeks;
     return `<div class="ls-bar ${isUnload?'unload':''}" style="height:${h}px;" title="Minggu ${i+1}: ${LOAD_LEVEL_MAP[v]}${isUnload?' (Unloading)':''}"></div>`;
   }).join("");
   return `
     <div class="ls-chart-wrap">
       <div class="ls-chart">${bars}</div>
-      <div class="ls-chart-axis">${s.pattern.map((_,i)=>`<span>M${i+1}</span>`).join("")}</div>
-      <div class="ls-chart-label">Loading Structure ${key} · ${s.loadWeeks} minggu loading + ${s.unloadWeeks} minggu unloading</div>
+      <div class="ls-chart-axis">${pattern.map((_,i)=>`<span>M${i+1}</span>`).join("")}</div>
+      <div class="ls-chart-label">Loading Structure ${loadWeeks}:${unloadWeeks} · ${loadWeeks} minggu loading + ${unloadWeeks} minggu unloading</div>
     </div>
   `;
 }
@@ -7390,7 +7403,7 @@ function mpMesocycleSection(mp, wk){
             <span>Specificity: ${m.specificity}</span>
             ${m.deload || (m.weekEnd - m.weekStart + 1 >= 4) ? `<span>Deload: Minggu ${m.weekEnd}</span>` : ""}
           </div>
-          ${m.loadingStructure && LOADING_STRUCTURES[m.loadingStructure] ? loadingStructureChart(m.loadingStructure) : ""}
+          ${(m.loadWeeks>0 || m.unloadWeeks>0) ? loadingStructureChart(m.loadWeeks, m.unloadWeeks) : ""}
           ${isStaff() ? `
           <div class="pactions" style="margin-top:8px;">
             <a onclick="openEditMesoModal('${mp.id}','${m.id}')">✎ Edit</a>
